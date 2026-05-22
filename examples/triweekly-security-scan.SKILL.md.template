@@ -74,7 +74,9 @@ The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` m
 
 ## Phase B — Per-project scans (parallel agents)
 
-Iterate `config.projects`. Skip any project whose `folder` is in `config.exclusions`. Skip any project whose `category` is `"backburner"` or whose folder isn't present at `<portfolioRoot>/<folder>` (treat both as a silent no-op, not an error).
+Iterate `config.projects`. Skip any project whose `folder` is in `config.exclusions`. Skip any project whose `category` is `"Archived"` (don't re-scan — last findings stay in `data/apps.js` from the prior scan, intentionally). Skip any project whose folder isn't present at `<portfolioRoot>/<folder>` (treat as a silent no-op, not an error).
+
+**"Archived" contract:** archiving a project means "stop scanning it but keep the most recent findings visible on the dashboard." Phase B doesn't run scans for these. Phase C's `phase_c_update.py` iterates `config.projects` and looks for a scan JSON per slug — for Archived projects no scan JSON exists, so it prints `SKIP <slug>: no scan file` and leaves that app's entry in `data/apps.js` untouched. The `Archived` category in the dashboard has `excludeFromStats: true` and `dim: true` by convention, so the project still renders (dimmed) but doesn't contribute to aggregate P1/P2 counts.
 
 For each remaining project:
 1. Read the security scan prompt from `<promptsRoot>/security-scan-prompt.md`.
