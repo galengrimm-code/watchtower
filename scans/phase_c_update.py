@@ -23,7 +23,6 @@ from pathlib import Path
 WATCHTOWER_ROOT = Path(__file__).resolve().parent.parent
 SCANS = WATCHTOWER_ROOT / "scans"
 APPS_JS = WATCHTOWER_ROOT / "data" / "apps.js"
-PROMPT_PATH = WATCHTOWER_ROOT / "prompts" / "security-scan-prompt.md"
 CONFIG_PATH = WATCHTOWER_ROOT / "watchtower.config.json"
 
 
@@ -34,16 +33,47 @@ def load_config():
         return json.load(f)
 
 
-def detect_scan_version():
-    """Read 'v6.x' from the first matching header line in the scan prompt."""
-    if not PROMPT_PATH.exists():
-        return "unknown"
-    with open(PROMPT_PATH, "r", encoding="utf-8") as f:
+def resolve_prompt_path(config):
+    """promptsRoot from config overrides the default <watchtowerRoot>/prompts/.
+    Lets the runtime point at a shared methodology folder (e.g., a separate
+    public/upstream watchtower repo) without duplicating prompts/. Fails loud
+    if the resolved path doesn't exist — silently shipping scanVersion="unknown"
+    produces misleading commit messages and apps.js metadata."""
+    prompts_root = config.get("promptsRoot")
+    if prompts_root:
+        path = Path(prompts_root) / "security-scan-prompt.md"
+        if not path.exists():
+            sys.exit(
+                f"ERROR: promptsRoot is set to {prompts_root!r} but "
+                f"security-scan-prompt.md is not there. Either correct promptsRoot "
+                f"in watchtower.config.json, or unset it to fall back to "
+                f"<watchtowerRoot>/prompts/."
+            )
+        return path
+    fallback = WATCHTOWER_ROOT / "prompts" / "security-scan-prompt.md"
+    if not fallback.exists():
+        sys.exit(
+            f"ERROR: no scan prompt found. promptsRoot is unset/null in "
+            f"watchtower.config.json and the default fallback at {fallback} "
+            f"does not exist. Set promptsRoot to your Watchtower methodology "
+            f"folder, or restore prompts/ inside the runtime repo."
+        )
+    return fallback
+
+
+def detect_scan_version(prompt_path):
+    """Read 'v6.x' from the first matching header line in the scan prompt.
+    Callers must guarantee prompt_path.exists() — resolve_prompt_path does this."""
+    with open(prompt_path, "r", encoding="utf-8") as f:
         for line in f:
             m = re.search(r"\bv\d+\.\d+\b", line)
             if m:
                 return m.group(0)
-    return "unknown"
+    sys.exit(
+        f"ERROR: scan prompt at {prompt_path} contains no v\\d+\\.\\d+ header. "
+        f"Phase C needs a version string to stamp on apps.js entries and the Phase D "
+        f"commit message."
+    )
 
 
 # Module-level state populated by main() before any helper that needs it runs.
@@ -636,10 +666,9 @@ def main():
     args = parser.parse_args()
 
     SCAN_DATE = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    SCAN_VERSION = detect_scan_version()
-    print(f"Phase C update: date={SCAN_DATE}, scan version={SCAN_VERSION}")
-
     config = load_config()
+    SCAN_VERSION = detect_scan_version(resolve_prompt_path(config))
+    print(f"Phase C update: date={SCAN_DATE}, scan version={SCAN_VERSION}")
     # slug -> displayName for all configured projects. None = "needs a new entry"
     # only for slugs in the legacy SLUG_TO_APP_NAME set (kept below for backward compat).
     SLUG_TO_APP_NAME = {p["slug"]: p["displayName"] for p in config["projects"]}

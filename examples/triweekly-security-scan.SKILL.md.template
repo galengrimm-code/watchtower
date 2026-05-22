@@ -37,7 +37,8 @@ Every path, project list, and project-specific name in this skill is derived fro
 - **Config path:** `<WATCHTOWER_CONFIG_PATH>` (e.g., `C:\code\watchtower\watchtower.config.json` or `/home/you/code/watchtower/watchtower.config.json`)
 - **Keys used by this skill:**
   - `portfolioRoot` — directory that contains every project folder
-  - `watchtowerRoot` — Watchtower repo root (where the dashboard, prompt, scans/, and helper scripts live)
+  - `watchtowerRoot` — Watchtower runtime repo root (where the dashboard, scans/, and helper scripts live)
+  - `promptsRoot` — directory holding the methodology files (`security-scan-prompt.md` + `claude-md-template.md`). Optional. Defaults to `<watchtowerRoot>/prompts/`. Set this if you want the runtime to read methodology from a separate folder (e.g., a cloned copy of the public watchtower repo) instead of duplicating files into your runtime.
   - `commercialAppSlug` — slug of your paid app (used in Phase B.7 Step 3); look it up in `projects[]` to get `folder` and `displayName`. Set to `null` if you don't have one.
   - `exclusions` — folder names under `portfolioRoot` to ignore when sweeping
   - `projects` — canonical list of `{folder, slug, displayName, category, isCommercial?}` entries
@@ -45,7 +46,7 @@ Every path, project list, and project-specific name in this skill is derived fro
 
 If any other path or name in this file looks hardcoded, prefer the config value. See `watchtower.config.example.json` for a starting template.
 
-The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` match in `<watchtowerRoot>/prompts/security-scan-prompt.md`. `phase_c_update.py` already does this; the commit message in Phase D should quote the same value.
+The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` match in `<promptsRoot>/security-scan-prompt.md` (or `<watchtowerRoot>/prompts/security-scan-prompt.md` when `promptsRoot` is unset). `phase_c_update.py` already does this and will fail loud if neither path resolves; the commit message in Phase D should quote the same value.
 
 ## Phase 0 — Self-reschedule the next run FIRST (before anything else)
 
@@ -64,7 +65,7 @@ The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` m
 
 ## Phase A — AI Tool Supply Chain audit (runs ONCE, before per-project scans)
 
-1. Read STEP 1C from `<watchtowerRoot>/prompts/security-scan-prompt.md`.
+1. Read STEP 1C from `<promptsRoot>/security-scan-prompt.md`.
 2. Fetch threat-db.yaml and security-hardening.md from the FlorianBruniaux/claude-code-ultimate-guide repo.
 3. Audit `~/.claude/` (global skills, plugins, MCP servers, hooks, memory files, settings, Claude Code version) and produce candidate findings (Phases 2-9).
 4. Run Phase 10 NVD cross-validation on every `ai-mcp-cve` candidate flag and on every installed MCP/skill/plugin name. If `~/.claude/.env` defines `NVD_API_KEY`, send it as the `apiKey` query param for higher rate limits.
@@ -76,7 +77,7 @@ The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` m
 Iterate `config.projects`. Skip any project whose `folder` is in `config.exclusions`. Skip any project whose `category` is `"backburner"` or whose folder isn't present at `<portfolioRoot>/<folder>` (treat both as a silent no-op, not an error).
 
 For each remaining project:
-1. Read the security scan prompt from `<watchtowerRoot>/prompts/security-scan-prompt.md`.
+1. Read the security scan prompt from `<promptsRoot>/security-scan-prompt.md`.
 2. Run STEP 1, STEP 1B, STEP 2, STEP 3, STEP 4 against the project code at `<portfolioRoot>/<folder>`.
 3. Append any per-project AI findings from Phase A to that project's `flags` array (categories prefixed `ai-`).
 4. Update the project's CLAUDE.md between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:END -->` markers with scan results.
@@ -92,7 +93,7 @@ python "<watchtowerRoot>/scans/write_scan_jsons.py" --date <YYYY-MM-DD>
 
 ## Phase B.5 — Validation sweep (single sequential agent)
 
-After all Phase B agents return, run ONE sequential validator agent that reads each scanned project's CLAUDE.md and confirms the SCAN:AUTO block matches the canonical structure defined in `<watchtowerRoot>/prompts/claude-md-template.md`.
+After all Phase B agents return, run ONE sequential validator agent that reads each scanned project's CLAUDE.md and confirms the SCAN:AUTO block matches the canonical structure defined in `<promptsRoot>/claude-md-template.md`.
 
 For each project, check between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:END -->`:
 
@@ -105,7 +106,7 @@ For each project, check between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:E
 7. `## Metrics` heading present with line counts, repo URL, production URL, last commit scanned, scan prompt version
 
 Build a per-project pass/fail report. For each project that fails:
-- Spawn a single re-scan agent for that project with explicit instructions: "Your previous SCAN:AUTO block was incomplete. Re-run STEP 3 + STEP 4 against this project. The validation found these missing or malformed sections: [list]. Re-emit the entire SCAN:AUTO block per the canonical template at `<watchtowerRoot>/prompts/claude-md-template.md`."
+- Spawn a single re-scan agent for that project with explicit instructions: "Your previous SCAN:AUTO block was incomplete. Re-run STEP 3 + STEP 4 against this project. The validation found these missing or malformed sections: [list]. Re-emit the entire SCAN:AUTO block per the canonical template at `<promptsRoot>/claude-md-template.md`."
 - Allow up to 2 retries per project
 - After 2 retries, surface the failure in the final scan summary
 

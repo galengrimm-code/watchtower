@@ -2,6 +2,8 @@
   "_comment": "Copy this file to watchtower.config.json and edit for your environment. The real config is gitignored in the public watchtower repo; in the runtime repo it stays tracked so the scheduled scan can read it.",
   "portfolioRoot": "C:\\Users\\you\\Documents\\Code",
   "watchtowerRoot": "C:\\Users\\you\\Documents\\Code\\watchtower",
+  "_promptsRoot_help": "Optional. If set, the scan reads security-scan-prompt.md and claude-md-template.md from this directory instead of <watchtowerRoot>/prompts/. Useful when you want to point your runtime at a separately-cloned copy of the public watchtower repo so you only maintain one methodology file. Omit this key (or set null) to use the default (prompts live inside the runtime repo).",
+  "promptsRoot": null,
   "scanCadenceDays": 21,
   "commercialAppSlug": "your-commercial-app-slug-or-null",
   "exclusions": [
