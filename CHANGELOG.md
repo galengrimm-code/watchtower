@@ -1,0 +1,113 @@
+# Changelog
+
+All notable changes to the scan methodology. The methodology version is in the
+prompt file header (`prompts/security-scan-prompt.md`, line 8) and is the source
+of truth — Watchtower itself doesn't have a separate semver. Treat each `v6.x`
+prompt bump as a release.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
+
+## Unreleased
+
+- ...
+
+## v6.7 — 2026-05-21
+
+OWASP Top 10 (2021) categorization across the taxonomy.
+
+### Added
+
+- Every flag category in the taxonomy now maps to an OWASP Top 10 (2021)
+  category where applicable. AI supply-chain and project-hygiene flags have no
+  OWASP equivalent and are left unmapped on purpose.
+- Optional `owasp` field on flag JSON (e.g., `"owasp": "A05"`) for downstream
+  filtering and reporting.
+- "OWASP TOP 10 MAPPING" section in the scan prompt as the single source of
+  truth for flag → OWASP mapping.
+
+### Notes
+
+- Mapping inspired by the structured threat-modeling approach in gstack's
+  `cso` skill. No code copied; implementation is original.
+- Mapping reference: https://owasp.org/Top10/ (CC BY-SA 4.0).
+
+## v6.6 — 2026-05-15
+
+Codex adversarial review of v6.5 produced 8 net-new gaps. All landed in one
+bump.
+
+### Added
+
+- STEP 1 grep checks: SSRF user-URL-fetch, webhook replay protection, open
+  redirect detection, path traversal in file read/download, prototype-pollution
+  merge grep, auth-endpoint rate-limiting check.
+- STEP 1B live probes: CORS origin reflection + credentials probe, SSRF live
+  probe against `/api/proxy?url=`-style routes, exposed-endpoint curl sweep
+  (`/.env`, `/.git/HEAD`, `/backup.sql`, `/actuator`, etc.).
+- New flag categories: `cors-origin-reflection`, `ssrf-user-url-fetch`,
+  `webhook-replay-unprotected`, `open-redirect-unvalidated`,
+  `path-traversal-file-read`, `prototype-pollution-merge`,
+  `public-sensitive-endpoint`, `auth-endpoint-no-rate-limit`.
+
+### Notes
+
+- Additions sourced from an OpenAI Codex adversarial review run against the
+  v6.5 prompt.
+
+## v6.5 — 2026-05-15
+
+Identity, AI, and supply-chain checks. The cycle that broadened scope from
+"code grep" to "code + DNS + AI environment + auth provider config."
+
+### Added
+
+- STEP 1 grep checks: service_role key surface count, Stripe webhook signature
+  pattern, GitHub Actions unpinned-uses check, LLM-output-into-DOM trace,
+  audit-log + period-locking schema check (formalized from DATA INTEGRITY
+  RULES).
+- STEP 1B: DMARC/SPF/DKIM/CAA DNS audit, unauthenticated cron/webhook endpoint
+  audit.
+- STEP 1C: Phase 11 (memory file hash drift detection), Phase A LLM spend-cap
+  inventory reminder.
+- New flag categories: `missing-dmarc`, `dmarc-policy-none`, `missing-spf`,
+  `missing-caa`, `excess-service-role-surface`, `stripe-webhook-unverified`,
+  `gha-unpinned-action`, `llm-output-dom-render`, `missing-audit-log`,
+  `missing-period-lock`, `ai-memory-file-drift`, `llm-spend-cap-unverified`,
+  `unauthenticated-cron`, `unauthenticated-webhook`.
+
+## v6.4 — 2026-05-06
+
+Baseline. Numbered explicitly here because v6.6 and v6.7 both reference it
+when narrowing earlier checks.
+
+### Added
+
+- CORS Verification probe (wildcard `Access-Control-Allow-Origin: *` detector).
+  Later extended in v6.6 with the origin-reflection + credentials check.
+- General rate-limiting check across endpoints (later specialized in v6.6 to a
+  separate auth-endpoint variant).
+
+## v6.3
+
+### Added
+
+- Phase 10 NVD cross-validation. The community-maintained threat-db produces
+  candidate `ai-mcp-cve` flags; Phase 10 cross-checks each against the NIST
+  National Vulnerability Database before they ship. Treats the community DB as
+  advisory, NVD as authoritative.
+- Optional `NVD_API_KEY` from `~/.claude/.env` for higher rate limits.
+
+## Earlier (v6.0–v6.2)
+
+Pre-public-release iterations focused on the core scan structure:
+package.json/config inspection, git-history secret sweeps, deployed-surface
+HTTP header probes, MCP/skill/plugin auditing. Detailed notes live in the
+internal commit history rather than this changelog.
+
+## Attribution
+
+- v6.6 adversarial-review additions: [OpenAI Codex](https://github.com/openai/codex)
+- v6.7 OWASP framing: inspired by [gstack](https://github.com/garrettmoon/gstack)'s
+  `cso` skill (no code copied)
+- AI tool threat database: [FlorianBruniaux/claude-code-ultimate-guide](https://github.com/FlorianBruniaux/claude-code-ultimate-guide)
+- CVE cross-validation: [NIST National Vulnerability Database](https://nvd.nist.gov/)

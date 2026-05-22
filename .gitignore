@@ -1,0 +1,29 @@
+# Runtime data — populated by the scheduled scan, NOT committed to the public repo.
+# Each is a populated form of a .example.js file in this directory.
+data/apps.js
+data/portfolio-stats.js
+data/ai-tool-intel.js
+
+# Per-scan history (large, frequently updated, and project-specific).
+scans/*.json
+
+# Your real config — gitignored because it contains absolute paths to your machine.
+watchtower.config.json
+
+# Backups produced by phase_c_update.py during a scan.
+data/*.bak
+data/*.phasec.bak
+
+# Standard noise.
+node_modules/
+.vercel/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
+.env
+.env.*
+!.env.example

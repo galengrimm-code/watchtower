@@ -1,0 +1,40 @@
+{
+  "_comment": "Copy this file to watchtower.config.json and edit for your environment. The real config is gitignored in the public watchtower repo; in the runtime repo it stays tracked so the scheduled scan can read it.",
+  "portfolioRoot": "C:\\Users\\you\\Documents\\Code",
+  "watchtowerRoot": "C:\\Users\\you\\Documents\\Code\\watchtower",
+  "scanCadenceDays": 21,
+  "commercialAppSlug": "your-commercial-app-slug-or-null",
+  "exclusions": [
+    "node_modules",
+    "some-folder-to-skip"
+  ],
+  "_categories_help": "Categories are the chips that show up on the dashboard filter bar. Keys are the display names; projects reference them by exact-match in their `category` field below AND in window.APPS[*].category. Each value can have: color (string accent OR {bg, border, accent, tag} object), excludeFromStats (drop from aggregate stats), sortOrder (lower = earlier in filter bar), dim (faded card styling, like an archive bin). Categories not listed here still render — they just get a neutral gray chip. Delete this map to fall back to fully auto-derived neutral chips.",
+  "categories": {
+    "Active":     { "color": "#4caf50", "excludeFromStats": false, "sortOrder": 1 },
+    "Commercial": { "color": "#5b9bd5", "excludeFromStats": false, "sortOrder": 2 },
+    "Tool":       { "color": "#b388d9", "excludeFromStats": false, "sortOrder": 3 },
+    "Experiment": { "color": "#d4a843", "excludeFromStats": true,  "sortOrder": 4 },
+    "Archived":   { "color": "#888888", "excludeFromStats": true,  "sortOrder": 99, "dim": true }
+  },
+  "projects": [
+    {
+      "folder": "example-active-app",
+      "slug": "example-active",
+      "displayName": "Example Active App",
+      "category": "Active"
+    },
+    {
+      "folder": "example-commercial-app",
+      "slug": "example-commercial",
+      "displayName": "Example Commercial App",
+      "category": "Commercial",
+      "isCommercial": true
+    },
+    {
+      "folder": "example-experiment-app",
+      "slug": "example-experiment",
+      "displayName": "Example Experiment App",
+      "category": "Experiment"
+    }
+  ]
+}

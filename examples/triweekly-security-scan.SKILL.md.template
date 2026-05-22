@@ -1,0 +1,227 @@
+---
+name: triweekly-security-scan
+description: Triweekly (~21-day) security scan: AI tool supply chain audit + NVD cross-validation + Codex adversarial pass on net-new P1 flags + commercial-app CLAUDE.md drift review, refresh Watchtower dashboard. Self-reschedules in Phase 0 (fireAt-based, not cron — true 21-day cadence). Scan version is whatever the Watchtower runtime's prompts/security-scan-prompt.md says it is.
+---
+
+<!--
+  This is the public template for Watchtower's scheduled-scan skill. To install:
+
+  1. Drop this file (renamed to SKILL.md) into:
+       ~/.claude/scheduled-tasks/triweekly-security-scan/SKILL.md
+     The directory name becomes the taskId for the scheduled-tasks MCP.
+
+  2. Replace <WATCHTOWER_CONFIG_PATH> below with the absolute path to your
+     watchtower.config.json. Everywhere else, <watchtowerRoot> and <portfolioRoot>
+     are read FROM that config at runtime — leave those references alone.
+
+  3. Arm the schedule once via:
+       mcp__scheduled-tasks__create_scheduled_task
+         name="triweekly-security-scan"
+         fireAt="<your first run target, ISO 8601 with TZ offset>"
+     Phase 0 self-reschedules every subsequent run.
+
+  4. Optional but recommended: put NVD_API_KEY in ~/.claude/.env for higher
+     rate limits on Phase 10 NVD cross-validation. (Free key, 30s signup at
+     https://nvd.nist.gov/developers/request-an-api-key)
+
+  5. Optional: install the /codex skill if you want Phase B.7 adversarial review.
+     Without it, Phase B.7 fails soft and the rest of the scan proceeds.
+
+  Delete this comment block once installed.
+-->
+
+## Config-driven (read this first)
+
+Every path, project list, and project-specific name in this skill is derived from the runtime config file:
+
+- **Config path:** `<WATCHTOWER_CONFIG_PATH>` (e.g., `C:\code\watchtower\watchtower.config.json` or `/home/you/code/watchtower/watchtower.config.json`)
+- **Keys used by this skill:**
+  - `portfolioRoot` — directory that contains every project folder
+  - `watchtowerRoot` — Watchtower repo root (where the dashboard, prompt, scans/, and helper scripts live)
+  - `commercialAppSlug` — slug of your paid app (used in Phase B.7 Step 3); look it up in `projects[]` to get `folder` and `displayName`. Set to `null` if you don't have one.
+  - `exclusions` — folder names under `portfolioRoot` to ignore when sweeping
+  - `projects` — canonical list of `{folder, slug, displayName, category, isCommercial?}` entries
+  - `scanCadenceDays` — interval for Phase 0 self-rescheduling
+
+If any other path or name in this file looks hardcoded, prefer the config value. See `watchtower.config.example.json` for a starting template.
+
+The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` match in `<watchtowerRoot>/prompts/security-scan-prompt.md`. `phase_c_update.py` already does this; the commit message in Phase D should quote the same value.
+
+## Phase 0 — Self-reschedule the next run FIRST (before anything else)
+
+**Run this BEFORE Phase A.** If the scan crashes anywhere after this point, the next run is still armed — that's the whole point of doing it first.
+
+1. Compute the next fire timestamp: now (in your local time zone) + `config.scanCadenceDays` days, at your preferred run hour. Format as ISO 8601 with the correct offset for that future date.
+2. Call `mcp__scheduled-tasks__update_scheduled_task` with:
+   - `taskId`: the directory name of this skill (`triweekly-security-scan` if you followed the install instructions) — do NOT change this even if you change cadence
+   - `fireAt`: the ISO 8601 timestamp computed above
+3. If the call returns success, log `"Next run armed for <iso-timestamp>"` and proceed to Phase A.
+4. If the call fails: do NOT proceed silently — emit a P1-equivalent warning in the final scan summary so the human notices. The chain is broken until manually re-armed.
+
+**Why first, not last:** Putting self-rescheduling at the END means a crashed scan = dead chain. Putting it FIRST means the next scan always happens, even if today's scan was a total disaster.
+
+**Why fireAt and not cron:** True N-day cadence isn't expressible in a 5-field cron when N doesn't divide cleanly into months. fireAt gives exact spacing. The tradeoff is fragility — see paragraph above for the mitigation.
+
+## Phase A — AI Tool Supply Chain audit (runs ONCE, before per-project scans)
+
+1. Read STEP 1C from `<watchtowerRoot>/prompts/security-scan-prompt.md`.
+2. Fetch threat-db.yaml and security-hardening.md from the FlorianBruniaux/claude-code-ultimate-guide repo.
+3. Audit `~/.claude/` (global skills, plugins, MCP servers, hooks, memory files, settings, Claude Code version) and produce candidate findings (Phases 2-9).
+4. Run Phase 10 NVD cross-validation on every `ai-mcp-cve` candidate flag and on every installed MCP/skill/plugin name. If `~/.claude/.env` defines `NVD_API_KEY`, send it as the `apiKey` query param for higher rate limits.
+5. Write the result (including the `crossCheck` aggregate from Phase 10) to `<watchtowerRoot>/data/ai-tool-intel.js` — replace ONLY the block between `<!-- AI_INTEL:AUTO:START -->` and `<!-- AI_INTEL:AUTO:END -->` markers.
+6. Capture project-level AI findings in a per-project map (keyed by project name) so per-project agents can append them in Phase B.
+
+## Phase B — Per-project scans (parallel agents)
+
+Iterate `config.projects`. Skip any project whose `folder` is in `config.exclusions`. Skip any project whose `category` is `"backburner"` or whose folder isn't present at `<portfolioRoot>/<folder>` (treat both as a silent no-op, not an error).
+
+For each remaining project:
+1. Read the security scan prompt from `<watchtowerRoot>/prompts/security-scan-prompt.md`.
+2. Run STEP 1, STEP 1B, STEP 2, STEP 3, STEP 4 against the project code at `<portfolioRoot>/<folder>`.
+3. Append any per-project AI findings from Phase A to that project's `flags` array (categories prefixed `ai-`).
+4. Update the project's CLAUDE.md between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:END -->` markers with scan results.
+5. STEP 4 of the prompt runs validation and emits `STRUCTURE: PASS` on success.
+
+After all per-project agents return, write the per-project scan JSONs:
+
+```
+python "<watchtowerRoot>/scans/write_scan_jsons.py" --date <YYYY-MM-DD>
+```
+
+`write_scan_jsons.py` reads `watchtower.config.json` for the project list; do not pass it any other args.
+
+## Phase B.5 — Validation sweep (single sequential agent)
+
+After all Phase B agents return, run ONE sequential validator agent that reads each scanned project's CLAUDE.md and confirms the SCAN:AUTO block matches the canonical structure defined in `<watchtowerRoot>/prompts/claude-md-template.md`.
+
+For each project, check between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:END -->`:
+
+1. `## Tech Stack` heading present, table includes Frontend / Backend / Data / Auth / Hosting / Testing rows
+2. `## Architecture` heading present, with all four subheadings: `### Folder Structure`, `### Key Files`, `### Data Flow`, `### External API Calls`
+3. `## Environment Variables` heading present (content can be "None — ...")
+4. `## Security Notes` heading present, with all four subheadings: `### Active Flags`, `### Watch List (confidence < 0.8)`, `### Accepted Risks`, `### Resolved`
+5. `## Guardrails` heading present with `### Universal (apply to all projects)` and `### Project-Specific`
+6. `## Deployed Surface` heading present
+7. `## Metrics` heading present with line counts, repo URL, production URL, last commit scanned, scan prompt version
+
+Build a per-project pass/fail report. For each project that fails:
+- Spawn a single re-scan agent for that project with explicit instructions: "Your previous SCAN:AUTO block was incomplete. Re-run STEP 3 + STEP 4 against this project. The validation found these missing or malformed sections: [list]. Re-emit the entire SCAN:AUTO block per the canonical template at `<watchtowerRoot>/prompts/claude-md-template.md`."
+- Allow up to 2 retries per project
+- After 2 retries, surface the failure in the final scan summary
+
+Produce a final validation summary in the Phase D commit message body:
+```
+Validation: N/M projects passed structural validation on first attempt, X retries required, Y projects still failing (listed below).
+```
+
+## Phase B.7 — Codex adversarial pass (optional)
+
+After Phase B.5 validates structure, optionally run a focused Codex second-opinion pass. The /codex skill is an OpenAI Codex CLI wrapper; it bills to your ChatGPT subscription (no per-call cost) and has three modes: review, challenge, consult. Skip this entire phase if you don't have /codex installed.
+
+**Hard requirement: every Codex call wrapped in a 60-second timeout.** If Codex hangs on an auth prompt or rate limit, the scheduled task itself hangs — that's worse than skipping the second opinion. Use `timeout 60` in bash, or the equivalent.
+
+### Step 1: Compute net-new P1 flags this cycle
+
+1. Load this run's scan JSONs from `<watchtowerRoot>/scans/*-<today>.json`
+2. Load the prior run's scan JSONs (whatever the previous date was)
+3. For each project, compute the set difference: `current.P1_flags - prior.P1_flags` (compare by category + key text fragments, not exact text match)
+4. Aggregate across all projects. Hard cap at 3 (sort by project criticality: the commercial app from `config.commercialAppSlug` first, then everything else; drop overflow).
+
+### Step 2: Codex challenge per net-new P1
+
+For each net-new P1 (max 3):
+1. Build a self-contained prompt: the flag text, the category, the relevant file path(s) + line numbers from the scan JSON, and 30-50 lines of surrounding code context.
+2. Run: `timeout 60 /codex challenge "<prompt>"`.
+3. Capture stdout. If Codex disagrees substantively, record a `{project, flag, codexResponse}` entry.
+4. If timeout fires or Codex errors, record `{project, flag, codexStatus: "timeout"|"error", reason}` — do NOT block the pipeline.
+
+### Step 3: Codex review on commercial app's CLAUDE.md diff
+
+Skip this step entirely if `config.commercialAppSlug` is null or the resolved folder doesn't exist.
+
+1. After Phase B updates the commercial app's CLAUDE.md, stage the change but do NOT commit yet.
+2. Run: `cd "<portfolioRoot>/<commercial-app-folder>" && timeout 60 /codex review` on the staged diff.
+3. Codex's job: did Claude accurately describe what changed in this codebase, or did it hallucinate architecture details for files it didn't actually read?
+4. Capture stdout. If Codex flags inaccuracies, record them.
+
+### Step 4: Emit "Codex disagreements" section for Phase D
+
+Build a markdown block for the Phase D commit message body:
+```
+## Codex second opinion
+
+<For each disagreement>
+- **<project> / <flag category>**: Codex disagrees — "<verbatim quote>"
+  Claude's call vs Codex's call: [explain in one line]
+
+<If Codex flagged the commercial CLAUDE.md diff>
+- **<commercial app displayName> CLAUDE.md drift**: <codex quote>
+
+<If no disagreements>
+No Codex disagreements this cycle (N flags reviewed, commercial CLAUDE.md diff reviewed).
+```
+
+If Codex timed out or errored more than once, add: `Codex availability: N/M calls completed, M failures.` Do NOT block the commit on Codex availability — the scan still ships, just without the second opinion.
+
+## Phase C — Dashboard update
+
+After all scans + Codex pass complete:
+
+1. Merge fresh flag data into the dashboard's APPS array:
+   ```
+   python "<watchtowerRoot>/scans/phase_c_update.py" --date <YYYY-MM-DD>
+   ```
+   The script reads `watchtower.config.json` for the slug→displayName map and extracts the scan version from the prompt file header. It writes to `data/apps.js`, not `index.html`.
+
+2. Preserve any flags marked with `status: "accepted"` or `status: "resolved"` — the merger does this automatically.
+
+3. lastUpdated dates are written by the merger.
+
+4. Verify `data/ai-tool-intel.js` was written correctly by Phase A. Smoke test:
+   ```
+   node -e "global.window={}; require('<watchtowerRoot>/data/ai-tool-intel.js'); console.log(!!window.AI_TOOL_INTEL)"
+   ```
+
+5. **Regenerate portfolio stats:**
+   ```
+   node "<watchtowerRoot>/scans/generate-portfolio-stats.js"
+   ```
+   The generator is idempotent and read-only — safe to re-run. If it fails, fix the input and re-run. The dashboard renders with stale `portfolio-stats.js` if the generator was skipped — not catastrophic, just out of date.
+
+## Phase D — Commit and push
+
+1. `cd "<watchtowerRoot>"`
+2. Stage the artifacts the scan touched:
+   ```
+   git add data/apps.js data/ai-tool-intel.js data/portfolio-stats.js scans/*-<date>.json
+   ```
+   `index.html` is no longer touched by the scan — APPS lives in `data/apps.js`.
+
+3. git commit with this message structure:
+   ```
+   Scheduled scan <date>: update flags + AI tool intel + portfolio stats
+
+   Validation: <Phase B.5 summary line>
+
+   <Phase B.7 "Codex second opinion" block from Step 4>
+   ```
+
+4. git push.
+
+5. Also commit and push any CLAUDE.md updates in individual project repos. If those projects deploy via Vercel (or similar) on every commit, include `[skip ci]` in the per-project commit message — CLAUDE.md is local-only context and a deploy for that change is wasted build minutes. Format:
+   ```
+   <scan-version> security scan <date>: refresh CLAUDE.md SCAN:AUTO block [skip ci]
+   ```
+   (Where `<scan-version>` is whatever the prompt file currently says.)
+
+## Important notes
+
+- Read `watchtower.config.json` once at the start of each phase that needs it; don't hardcode any folder names in this skill.
+- Use parallel agents for scanning multiple projects simultaneously (Phase B).
+- The dashboard's stats filter is independent of `config.exclusions`. Excluding a folder means it isn't scanned; categorizing it as Other/Archived means the dashboard doesn't count it in aggregate stats. Both knobs exist on purpose.
+- Quote any path with spaces in commands; never use `\ ` backslash-escape on Windows (triggers Claude Code security prompt regardless of allow rules).
+- **Codex requires the /codex skill installed and the Codex CLI authenticated on the local machine.** The scheduled task runs as your session — if Codex auth has expired, the timeout wrapper prevents a hang but Codex calls will fail-soft.
+- **If Phase 0 self-rescheduling fails one cycle, the chain is dead until re-armed.** Watch the dashboard's `lastUpdated` field — if it goes more than `config.scanCadenceDays + 3` days stale, re-arm manually:
+  ```
+  mcp__scheduled-tasks__update_scheduled_task taskId="triweekly-security-scan" fireAt="<next-target>"
+  ```
