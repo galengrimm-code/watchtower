@@ -4,7 +4,7 @@
 > Catches drift across code, DNS, deployed surface, and AI tool supply chain.
 > Built for Claude Code. MIT licensed.
 
-Watchtower is a methodology + dashboard for the kind of developer who runs a dozen side projects, ships a paid SaaS app, and forgets which one has Stripe webhooks without signature verification. The scan runs every 21 days, finds what's drifted, and refreshes a static HTML dashboard so you can see the whole portfolio at a glance.
+Watchtower is a methodology + dashboard for the kind of developer who runs a dozen side projects, ships a paid SaaS app, and forgets which one has Stripe webhooks without signature verification. The scan runs on whatever cadence you set in `watchtower.config.json` (default: every 21 days — hence the "triweekly" branding), finds what's drifted, and refreshes a static HTML dashboard so you can see the whole portfolio at a glance.
 
 It does **not** replace per-PR review tools, professional penetration testing, or a real CSPM. It's a continuous low-effort hygiene loop for portfolios where a full security program would be overkill.
 
@@ -17,14 +17,14 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 | Scan prompt | 1700+ lines of "what to check, what to flag," currently at v6.7 with OWASP Top 10 (2021) categorization | `prompts/security-scan-prompt.md` |
 | Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel | `index.html` (data populates over time from your scheduled scans) |
 | Helper scripts | Three small Python + Node scripts that parse CLAUDE.md scan blocks, merge results, and generate stats | `scans/` |
-| Scheduled-scan skill | The orchestrator that wires Phases 0 → A → B → B.5 → B.7 → C → D into a self-rescheduling 21-day loop | `examples/triweekly-security-scan.SKILL.md.template` |
+| Scheduled-scan skill | The orchestrator that wires Phases 0 → A → B → B.5 → B.7 → C → D into a self-rescheduling loop on whatever cadence you configure (default: every 21 days) | `examples/triweekly-security-scan.SKILL.md.template` |
 | Config | One JSON file with your project list, portfolio root, and exclusions — everything else derives from this | `watchtower.config.example.json` |
 
 ---
 
 ## Architecture
 
-Watchtower is three pieces: a **public methodology repo** (this one), a **private runtime instance** on your machine where the scan actually executes, and a **local skill** in `~/.claude/scheduled-tasks/` that the scheduled-tasks MCP fires on a 21-day cadence. The public repo has no data — your runtime instance and skill stay private.
+Watchtower is three pieces: a **public methodology repo** (this one), a **private runtime instance** on your machine where the scan actually executes, and a **local skill** in `~/.claude/scheduled-tasks/` that the scheduled-tasks MCP fires on whatever cadence you set in `watchtower.config.json` (default: every 21 days). The public repo has no data — your runtime instance and skill stay private.
 
 ```mermaid
 graph TB
@@ -60,7 +60,7 @@ The runtime instance is whatever you want — public if you're brave, private if
 
 ---
 
-## The 21-day cycle
+## The scan cycle (default 21 days, configurable)
 
 ```mermaid
 sequenceDiagram
@@ -71,7 +71,7 @@ sequenceDiagram
     participant Codex as /codex (optional)
     participant Dash as Watchtower dashboard
 
-    Cron->>Skill: fire (every 21 days, fireAt-based)
+    Cron->>Skill: fire (default 21 days, fireAt-based — configurable via scanCadenceDays)
     Skill->>Skill: Phase 0 — self-reschedule next run FIRST
     Skill->>Skill: Phase A — AI tool supply chain audit (once)
     Skill->>Code: Phase B — parallel scans per project
@@ -189,7 +189,7 @@ Codex disagreements land in the Phase D commit message under `## Codex second op
 - **Add a new check**: edit `prompts/security-scan-prompt.md`. The taxonomy and OWASP mapping live in dedicated sections — keep both in sync when adding categories.
 - **Add a new project**: append an entry to `watchtower.config.json`'s `projects` array. The next scheduled run picks it up.
 - **Skip a project for one cycle**: add its folder to `exclusions`. Re-enable by removing.
-- **Change the cadence**: set `scanCadenceDays` in the config. Default 21.
+- **Change the cadence**: set `scanCadenceDays` in `watchtower.config.json`. The skill computes the next fire date as `now + scanCadenceDays`, so this can be anything from daily (`1`) to monthly (`30`) to quarterly (`90`) or longer. Default is `21`. The name "triweekly" is just the default — pick whatever cadence matches how fast your portfolio drifts.
 - **Drop a check**: delete the relevant grep block from the prompt. The dashboard tolerates missing categories — it renders whatever's there.
 
 ### Configuring display categories
