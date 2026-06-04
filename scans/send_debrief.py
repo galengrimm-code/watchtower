@@ -185,6 +185,9 @@ def main():
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
+            # Resend's edge (Cloudflare) blocks the default Python-urllib UA
+            # with error code 1010. Identify the client explicitly.
+            "User-Agent": "Watchtower-PhaseE/1.0 (+https://github.com/galengrimm-code/watchtower)",
         },
     )
     try:
