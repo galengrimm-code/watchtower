@@ -6,6 +6,13 @@
   "promptsRoot": null,
   "scanCadenceDays": 21,
   "commercialAppSlug": "your-commercial-app-slug-or-null",
+  "_emailDebrief_help": "Optional. If present AND `RESEND_API_KEY` is set in ~/.claude/.env, Phase E emails a 5-section debrief (what changed / what stands out / what needs addressing / what's good / what's bad) after every scheduled scan. Requires a Resend account (https://resend.com) with a verified sending domain. To disable: omit this block or set it to null. To test without sending: `echo '# test' | python scans/send_debrief.py --subject test --dry-run`.",
+  "emailDebrief": null,
+  "_emailDebrief_example": {
+    "to": "you@example.com",
+    "from": "alerts@yourdomain.com",
+    "subjectPrefix": "[Watchtower]"
+  },
   "exclusions": [
     "node_modules",
     "some-folder-to-skip"

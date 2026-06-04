@@ -217,6 +217,94 @@ After all scans + Codex pass complete:
    ```
    (Where `<scan-version>` is whatever the prompt file currently says.)
 
+## Phase E — Email debrief (optional)
+
+Send a structured 5-section debrief to a configured recipient after Phase D. Pure quality-of-life — surfaces deltas and notable findings without you needing to open the dashboard.
+
+**Skip entirely if** `config.emailDebrief` is missing OR `~/.claude/.env` doesn't define `RESEND_API_KEY`. `scans/send_debrief.py` handles both checks and exits 2 quietly.
+
+**Runs whether Phase D succeeded or not.** If Phase D's commit/push failed, the email is still the most reliable channel to notify the human — surface the failure in the debrief and continue.
+
+### Step 1: gather inputs
+
+- This cycle's per-project scan JSONs at `<watchtowerRoot>/scans/*-<today>.json`
+- The most recent prior scan JSON per slug (largest date < today)
+- Phase B.5 validation summary, Phase B.7 Codex disagreements, Phase D commit hash + outcome, Phase 0.5 sync summary
+
+### Step 2: compute deltas per project
+
+- Net-new flags per severity: `current.P1 - prior.P1` (use category-level diffing for P1/P2 — minor wording changes shouldn't count as new)
+- Resolved flags: flags newly marked `status: "resolved"` in this cycle
+- Status flips: active → accepted, active → resolved, etc.
+
+Aggregate across portfolio. Note projects with the biggest deltas (positive or negative) for "what stands out."
+
+### Step 3: write the debrief (markdown, under 800 words)
+
+```
+# Watchtower scan <date> — <scan-version>
+
+<one-sentence summary>
+
+## What changed
+- Net-new flags per severity across portfolio
+- Resolved flags this cycle, grouped by project
+- Status flips worth noting
+- Phase 0.5 sync summary if anything wasn't `clean`
+
+## What stands out
+1-3 paragraphs on the most notable changes. Biggest delta, surprising regression,
+Codex disagreement that survived, project that flipped to clean. Don't pad if
+nothing stands out — say so plainly.
+
+## What needs to be addressed
+- Open P1s, commercial app first then alphabetical
+- Open P2s, same sort
+- Cap at ~15 items; if more, group by project
+
+## What's good
+- Projects with 0 P1 AND 0 P2 this cycle
+- Projects that resolved flags
+- Coverage wins: full lint+format, low CLAUDE.md hand-curated line count
+
+## What's bad
+- Projects with growing flag counts cycle-over-cycle
+- Stalest scans (oldest lastScanned dates, excluding Archived)
+- Missing CLAUDE.md or empty SCAN:AUTO block
+- Codex disagreements that survived adversarial review
+
+---
+<Phase D commit hash + URL>
+<Phase B.5 validation line>
+```
+
+### Step 4: send via Resend
+
+```
+echo "<debrief markdown>" | python "<watchtowerRoot>/scans/send_debrief.py" --subject "scan <date>: <N> active P1, <M> active P2"
+```
+
+The script reads `config.emailDebrief.{to,from,subjectPrefix}` from `watchtower.config.json`, loads `RESEND_API_KEY` from `~/.claude/.env`, converts the markdown to minimal HTML, and POSTs to Resend.
+
+Exit codes:
+- `0` — sent (record `email-sent` in scan summary)
+- `1` — error (record `email-error`; do NOT block, the scan still shipped)
+- `2` — skipped because not configured or no key (record `email-skipped`)
+
+### Setup checklist for first-time use
+
+1. Verify a sending domain in Resend (`alerts@yourdomain.com` or similar).
+2. Add `RESEND_API_KEY=re_...` to `~/.claude/.env`.
+3. Add this block to `watchtower.config.json`:
+   ```json
+   "emailDebrief": {
+     "to": "you@example.com",
+     "from": "alerts@yourdomain.com",
+     "subjectPrefix": "[Watchtower]"
+   }
+   ```
+4. Test before the next scheduled run: `echo "# test" | python scans/send_debrief.py --subject "test" --dry-run` (validates config + payload without sending).
+
 ## Important notes
 
 - Read `watchtower.config.json` once at the start of each phase that needs it; don't hardcode any folder names in this skill.
