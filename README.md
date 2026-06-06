@@ -1,8 +1,14 @@
-# Watchtower
+<p align="center">
+  <img src="icon-512.png" alt="Watchtower" width="140" />
+</p>
 
-> Triweekly security scan for solo-dev and small-team code portfolios.
-> Catches drift across code, DNS, deployed surface, and AI tool supply chain.
-> Built for Claude Code. MIT licensed.
+<h1 align="center">Watchtower</h1>
+
+<p align="center">
+  <em>Triweekly security scan for solo-dev and small-team code portfolios.</em><br>
+  <em>Catches drift across code, DNS, deployed surface, and AI tool supply chain.</em><br>
+  <em>Built for Claude Code. MIT licensed.</em>
+</p>
 
 Watchtower is a methodology + dashboard for the kind of developer who runs a dozen side projects, ships a paid SaaS app, and forgets which one has Stripe webhooks without signature verification. The scan runs on whatever cadence you set in `watchtower.config.json` (default: every 21 days — hence the "triweekly" branding), finds what's drifted, and refreshes a static HTML dashboard so you can see the whole portfolio at a glance.
 

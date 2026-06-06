@@ -1,0 +1,12 @@
+{
+  "name": "Watchtower — Portfolio Security Dashboard",
+  "short_name": "Watchtower",
+  "description": "Triweekly security scan for solo-dev portfolios. Catches drift across code, DNS, deployed surface, and AI tool supply chain.",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
+  "theme_color": "#050a10",
+  "background_color": "#050a10",
+  "display": "standalone"
+}
