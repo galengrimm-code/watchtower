@@ -5,9 +5,15 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v6.7
+# Security Scan Prompt v6.8
 
 Scan this project and give me a full security audit and code analysis.
+
+**v6.8 additions (2026-06-06) — relax file-size heuristic for AI-readable code:**
+- `file-over-500` threshold raised from 500 to **1500 lines, uniformly across all file types** (.js, .ts, .jsx, .tsx, .css, .html, .py, etc.). The prior 500-line cutoff was 2000s-era human-reading guidance; AI-readable code can be denser without becoming unworkable, and the proxy weakens as humans stop being the primary readers.
+- Category key stays `file-over-500` for backwards compatibility with existing scan history and dashboard fields (`metrics.filesOver500`). Semantic meaning shifts: "files over the split threshold" with threshold now 1500.
+- The .jsx/.tsx-specific 1500 carveout from earlier prompts is now the universal default; no per-extension exception.
+- Cohesion still matters more than raw line count. A 1200-line file doing one thing is fine; a 300-line file doing six things is worse. Use the flag as a "consider splitting" signal, not a mandatory refactor trigger.
 
 **v6.7 additions (2026-05-21) — OWASP Top 10 (2021) categorization:**
 - Every flag category in the taxonomy now maps to an OWASP Top 10 (2021) category where applicable (AI supply-chain and project-hygiene flags have no OWASP equivalent — left blank)
@@ -1287,7 +1293,7 @@ P4 — Low:
 - Missing .env.example or .env.local.example file → category: missing-env-example
 - Missing README or setup documentation → category: missing-readme
 - Missing .gitignore patterns for .env files → category: missing-gitignore
-- Files over 500 lines that should be split → category: file-over-500. **For `.jsx` and `.tsx` files, use a 1500-line threshold instead** — prettier's `printWidth: 100` multiplies JSX prop-per-line wrapping 2-10x without representing real code growth, and some portfolios intentionally ship monolithic React components. Use 500 for `.js`, `.ts`, `.css`, `.html`, `.py`, etc.
+- Files over **1500 lines** that should be split → category: file-over-500. Threshold is uniform across all file types (.js, .ts, .jsx, .tsx, .css, .html, .py, etc.) as of v6.8 — the prior 500-line cutoff was folklore from human-era code review, and AI-readable code can be denser without becoming unworkable. The category key stays `file-over-500` for backwards compatibility with scan history and dashboard fields. Use this as a "consider splitting" signal, not a mandatory refactor trigger — cohesion matters more than raw line count.
 - Known vulnerable or deprecated dependencies from npm audit (moderate severity) → category: npm-cve-moderate
 - Missing X-Content-Type-Options header → category: missing-x-content-type
 - Missing X-Frame-Options header (clickjacking risk) → category: missing-x-frame
@@ -1346,7 +1352,7 @@ These are the valid category keys for flags. Every flag must use one of these:
 | missing-env-example | P4 | No .env.example file |
 | missing-readme | P4 | No README or setup docs |
 | missing-gitignore | P4 | Missing .gitignore patterns for .env |
-| file-over-500 | P4 | Files that should be split. Threshold: 500 for non-JSX, **1500 for `.jsx`/`.tsx`** (prettier wrapping multiplies JSX line counts without real growth). |
+| file-over-500 | P4 | Files that should be split. Threshold: 1500 lines, applied uniformly across all file types as of v6.8. Category key kept for backwards compatibility with scan history. |
 | stack-trace-leakage | P1 | Error handlers expose internals in production |
 | open-redirect | P1 | User-controlled redirect without validation |
 | exposed-env-in-build | P1 | .env files bundled into dist/build output |
@@ -1861,7 +1867,7 @@ Always include these 9 universal guardrails:
 9. Run `npx prettier --write .` before committing — keep a `.prettierrc` in the repo root
 
 Generate project-specific guardrails from scan flags:
-- Files over 500 lines → "Do not add to {filename} ({N} lines) — split before adding features"
+- Files over 1500 lines → "Do not add to {filename} ({N} lines) — split before adding features"
 - innerHTML usage → "Use textContent instead of innerHTML ({N} existing XSS vectors)"
 - Missing auth on API routes → "Add authentication before creating new data-modifying endpoints"
 - Open CORS (Access-Control-Allow-Origin: *) → "Restrict CORS origin on any new API routes"
