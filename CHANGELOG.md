@@ -11,6 +11,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
 - ...
 
+## v6.8 — 2026-06-06
+
+Relax `file-over-500` to a uniform 1500-line threshold.
+
+### Changed
+
+- `file-over-500` threshold raised from 500 to **1500 lines, uniformly across all file types** (.js, .ts, .jsx, .tsx, .css, .html, .py, etc.). The prior 500-line cutoff was 2000s-era guidance for humans reading on small monitors; AI-readable code can be denser without becoming unworkable, and the proxy weakens as humans stop being the primary readers.
+- The earlier .jsx/.tsx-specific 1500 carveout from v6.6 is now the default for all extensions; no per-extension exception.
+
+### Notes
+
+- Category key stays `file-over-500` for backwards compatibility with existing scan history and dashboard fields (`metrics.filesOver500`). Semantic meaning shifts to "files over the split threshold" with threshold = 1500.
+- Empirical impact on a 25-project portfolio: 16 active flags dropped to 9 — roughly 44% noise reduction. The 9 survivors are all genuinely monolithic (1500+ lines), worth keeping on the radar.
+- Cohesion still matters more than raw line count. A 1200-line file doing one thing is fine; a 300-line file doing six things is worse. Treat the flag as a "consider splitting" signal, not a mandatory refactor trigger.
+
 ## v6.7 — 2026-05-21
 
 OWASP Top 10 (2021) categorization across the taxonomy.
