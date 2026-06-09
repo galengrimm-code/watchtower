@@ -114,11 +114,11 @@ Run these commands and include the results:
 
 - **Audit-log table check** (Supabase + financial/commercial projects):
   - Grep migrations directory and schema files for `CREATE TABLE.*\(audit_log\|changelog\|history\|audit_trail\|event_log\)` (case-insensitive)
-  - If absent AND the project is a financial app (farm-budget, farm-fin) OR a commercial app (mntlog) → flag `missing-audit-log` severity moderate. Text: "No audit_log / changelog / history table found in migrations. {project} handles {commercial/financial} data; absence means disputed changes have no evidence trail."
+  - If absent AND the project is a financial app (budgeting, accounting, invoicing) OR a commercial app (the slug in `watchtower.config.json`'s `commercialAppSlug`, or any project with paying customers) → flag `missing-audit-log` severity moderate. Text: "No audit_log / changelog / history table found in migrations. {project} handles {commercial/financial} data; absence means disputed changes have no evidence trail."
   - Fix: add an `audit_log(id, table_name, record_id, action, changed_by, changed_at, old_values jsonb, new_values jsonb)` table and a generic trigger that fires on INSERT/UPDATE/DELETE on tracked tables.
-  - Skip for non-commercial / non-financial projects (Daily-trivia, market-dashboard, etc. don't need this).
+  - Skip for non-commercial / non-financial projects (games, demos, internal dashboards don't need this).
 
-- **Period locking check** (financial projects: farm-budget, farm-fin, mntlog):
+- **Period locking check** (same financial/commercial projects as the audit-log check):
   - Grep migrations for triggers or RLS policies that prevent UPDATE/DELETE on records older than a configurable date
   - Patterns to look for: `BEFORE UPDATE.*period_locked`, `WHERE.*created_at.*<.*NOW.*INTERVAL`, `IF OLD.locked = true THEN RAISE`
   - If absent on a financial project → flag `missing-period-lock` severity moderate. Text: "No period-locking trigger or policy found. Records from closed fiscal periods (prior tax years, finalized invoices) can be freely modified — audit/tax risk."
@@ -241,7 +241,7 @@ Check the page HTML source (via `curl -s <URL>`) for auth provider scripts:
 - `curl -sI -H "Origin: https://evil.com" <URL>/api/health` — check if `Access-Control-Allow-Origin: *` is returned on API routes, not just static assets
 
 ### DNS & Email Authentication (v6.5 addition)
-Extract the apex domain from the deployed URL (e.g., `mntlog.net` from `https://mntlog.net`, `precisionfarms.llc` from `https://budget.precisionfarms.llc`). Run:
+Extract the apex domain from the deployed URL (e.g., `example.com` from `https://example.com`, `example.org` from `https://app.example.org`). Run:
 
 ```bash
 DOMAIN="<apex-domain>"
@@ -744,7 +744,7 @@ memoryFileHashes: {
     "MEMORY.md": { sha256: "def456...", changedSincePrior: false }
   },
   perProject: {
-    "Farm-Budget": { sha256: "...", changedSincePrior: false },
+    "Example-App": { sha256: "...", changedSincePrior: false },
     "New Maint-App": { sha256: "...", changedSincePrior: true, commitFound: true }
   }
 }
