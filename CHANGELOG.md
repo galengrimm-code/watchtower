@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
 ## Unreleased
 
+- Pipeline: `scans/write_scan_jsons.py` now parses each project's SCAN:AUTO `## Metrics`
+  section into the scan JSON (`metrics` key: `totalLines`, `components`, `pages`,
+  `apiRoutes`, `filesOver500`). `filesOver500` keeps its legacy key name but counts
+  files over the v6.8 1,500-line threshold, converting pre-v6.8 lists to the current
+  semantics. `phase_c_update.py` merges scan metrics into existing entries while
+  preserving curated-only keys (`codeLines`, `dataLines`, `linesByType`) the
+  CLAUDE.md-derived scans never provide. Auto-created dashboard entries now show code
+  metrics ("Total code lines", "Files 1500+") from their first scan instead of
+  "Not scanned", and all entries' metrics refresh on every merge.
 - Pipeline: `scans/write_scan_jsons.py` now parses each project's SCAN:AUTO `## Tech Stack`
   table and `Production URL` line into the scan JSON (top-level `frontend`/`backend`/
   `dataStorage`/`integrations`/`auth`/`testing`/`hosting` keys + `url`). `phase_c_update.py`

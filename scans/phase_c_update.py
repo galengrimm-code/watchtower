@@ -608,9 +608,27 @@ def update_app(obj_text, scan, app_name):
             obj_text, "envSecrets", "[" + ", ".join(jstr(s) for s in es) + "]"
         )
 
-    # 7) metrics
+    # 7) metrics — replace with scan values, but carry over curated-only keys
+    #    (codeLines / dataLines / linesByType) the CLAUDE.md-derived scans never
+    #    provide, so a merge doesn't silently drop them from hand-curated entries.
     if scan.get("metrics"):
-        obj_text = replace_top_level_field(obj_text, "metrics", js_metrics(scan["metrics"]))
+        merged = dict(scan["metrics"])
+        loc = find_top_level_field(obj_text, "metrics")
+        if loc:
+            existing = obj_text[loc[1]:loc[2]]
+            for key in ("codeLines", "dataLines"):
+                if key not in merged:
+                    km = re.search(r'\b%s:\s*(\d+)' % key, existing)
+                    if km:
+                        merged[key] = int(km.group(1))
+            if "linesByType" not in merged:
+                lm = re.search(r'linesByType:\s*(\{[^{}]*\})', existing)
+                if lm:
+                    try:
+                        merged["linesByType"] = json.loads(lm.group(1))
+                    except ValueError:
+                        pass
+        obj_text = replace_top_level_field(obj_text, "metrics", js_metrics(merged))
 
     # 8) structure
     if scan.get("structure"):

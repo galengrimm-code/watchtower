@@ -86,6 +86,35 @@ def parse_prod_url(scan_section):
     return None
 
 
+def parse_metrics(scan_section):
+    """Parse the "## Metrics" bullet list into an apps.js metrics dict.
+
+    Returns {} when the section or its Total lines bullet is absent (pre-template
+    SCAN:AUTO blocks), so the merge step leaves any existing metrics untouched.
+    filesOver500 keeps its legacy key name but counts files over the v6.8
+    1,500-line threshold — listed files at or under 1,500 (e.g. the "Largest:"
+    examples in a "_None over the threshold_" line) are excluded, which also
+    converts pre-v6.8 500-threshold lists to the current semantics.
+    """
+    m = re.search(r'## Metrics\s*\n(.*?)(?=\n## |\Z)', scan_section, re.DOTALL)
+    if not m:
+        return {}
+    section = m.group(1)
+    tl = re.search(r'\*\*Total lines:\*\*\s*~?([\d,]+)', section)
+    if not tl:
+        return {}
+    metrics = {"totalLines": int(tl.group(1).replace(',', ''))}
+    for label, key in (("Components", "components"), ("Pages", "pages"), ("API routes", "apiRoutes")):
+        cm = re.search(r'\*\*%s:\*\*\s*~?([\d,]+)' % re.escape(label), section)
+        if cm:
+            metrics[key] = int(cm.group(1).replace(',', ''))
+    fo = re.search(r'\*\*Files over [\d,]+ lines:\*\*\s*(.+)', section)
+    if fo:
+        counts = [int(n.replace(',', '')) for n in re.findall(r'`[^`\n]+`\s*\((\d[\d,]*)\)', fo.group(1))]
+        metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
+    return metrics
+
+
 def parse_flags(scan_section):
     af_m = re.search(r'### Active Flags\s*\|[^\n]+\n\|[-| ]+\n((?:\|.*\n)*)', scan_section)
     if not af_m:
@@ -143,6 +172,9 @@ def main():
         url = parse_prod_url(scan_section)
         if url:
             out["url"] = url
+        metrics = parse_metrics(scan_section)
+        if metrics:
+            out["metrics"] = metrics
         for f in flags:
             out["flagCount"][f["severity"]] += 1
         filename = f"{slug}-{scan_date}.json"
