@@ -20,6 +20,19 @@ TABLE_ROW = re.compile(
     r'\|\s*(P[1-4])\s*\|\s*([\w-]+)\s*\|\s*([\d.]+%?)\s*\|\s*(.+?)\s*\|'
 )
 
+# CLAUDE.md "## Tech Stack" table Layer labels -> apps.js tech object keys
+# (the keys phase_c_update.py's js_tech() consumes).
+TECH_LAYER_MAP = {
+    "frontend": "frontend",
+    "backend": "backend",
+    "data": "dataStorage",
+    "datastorage": "dataStorage",
+    "integrations": "integrations",
+    "auth": "auth",
+    "testing": "testing",
+    "hosting": "hosting",
+}
+
 
 def load_config():
     if not CONFIG_PATH.exists():
@@ -35,15 +48,45 @@ def parse_confidence(raw):
     return float(raw)
 
 
-def parse_flags(claude_md_path):
+def read_scan_section(claude_md_path):
+    """Return the SCAN:AUTO block's inner text, or "" if the markers are absent."""
     with open(claude_md_path, 'r', encoding='utf-8') as f:
         content = f.read()
     m = re.search(r'<!-- SCAN:AUTO:START\b[^>]*-->(.*?)<!-- SCAN:AUTO:END\b', content, re.DOTALL)
     if not m:
         m = re.search(r'<!-- SCAN:AUTO:START[^>]*-->(.*?)<!-- SCAN:AUTO:END(?!\w)', content, re.DOTALL)
         if not m:
-            return []
-    scan_section = m.group(1)
+            return ""
+    return m.group(1)
+
+
+def parse_tech(scan_section):
+    """Parse the "## Tech Stack" Layer/Tech table into apps.js tech keys."""
+    m = re.search(r'## Tech Stack\s*\n+\|[^\n]+\n\|[-| :]+\n((?:\|.*\n)*)', scan_section)
+    if not m:
+        return {}
+    tech = {}
+    for row in m.group(1).splitlines():
+        cells = [c.strip() for c in re.split(r'(?<!\\)\|', row.strip().strip('|'))]
+        if len(cells) < 2:
+            continue
+        key = TECH_LAYER_MAP.get(re.sub(r'[^a-z]', '', cells[0].lower()))
+        value = re.sub(r'\*\*([^*]+)\*\*', r'\1', cells[1]).replace('\\|', '|').strip()
+        if key and value and value.strip('_-— ').lower() not in ("", "none", "n/a"):
+            tech[key] = value
+    return tech
+
+
+def parse_prod_url(scan_section):
+    """Extract the Production URL line. Returns None when absent or not deployed."""
+    for m in re.finditer(r'Production URL[:*\s]+(\S+)', scan_section):
+        url = m.group(1).strip('`').rstrip('.,;)')
+        if url.startswith('http'):
+            return url
+    return None
+
+
+def parse_flags(scan_section):
     af_m = re.search(r'### Active Flags\s*\|[^\n]+\n\|[-| ]+\n((?:\|.*\n)*)', scan_section)
     if not af_m:
         return []
@@ -87,7 +130,8 @@ def main():
         if not claude_path.exists():
             errors.append(f"NOT FOUND: {claude_path}")
             continue
-        flags = parse_flags(claude_path)
+        scan_section = read_scan_section(claude_path)
+        flags = parse_flags(scan_section)
         out = {
             "app": display_name,
             "directory": folder,
@@ -95,6 +139,10 @@ def main():
             "flagCount": {"P1": 0, "P2": 0, "P3": 0, "P4": 0},
             "flags": flags,
         }
+        out.update(parse_tech(scan_section))
+        url = parse_prod_url(scan_section)
+        if url:
+            out["url"] = url
         for f in flags:
             out["flagCount"][f["severity"]] += 1
         filename = f"{slug}-{scan_date}.json"

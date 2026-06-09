@@ -616,7 +616,13 @@ def update_app(obj_text, scan, app_name):
     if scan.get("structure"):
         obj_text = replace_top_level_field(obj_text, "structure", js_structure(scan["structure"]))
 
-    # 9) repoUrl, url (keep current — sometimes scan disagrees with dashboard intentionally)
+    # 9) repoUrl (keep current — sometimes scan disagrees with dashboard intentionally).
+    #    url: same rule, EXCEPT fill it when currently null — a curated URL is never
+    #    overwritten, but auto-created skeleton entries get theirs from the scan.
+    if scan.get("url"):
+        loc = find_top_level_field(obj_text, "url")
+        if loc and obj_text[loc[1]:loc[2]].strip() == "null":
+            obj_text = replace_top_level_field(obj_text, "url", jstr(scan["url"]))
     return obj_text
 
 

@@ -9,7 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
 ## Unreleased
 
-- ...
+- Pipeline: `scans/write_scan_jsons.py` now parses each project's SCAN:AUTO `## Tech Stack`
+  table and `Production URL` line into the scan JSON (top-level `frontend`/`backend`/
+  `dataStorage`/`integrations`/`auth`/`testing`/`hosting` keys + `url`). `phase_c_update.py`
+  consumes them: tech refreshes on every merge, and `url` is filled on existing entries
+  only when currently `null` (a curated dashboard URL is never overwritten). Dashboard
+  entries auto-created for newly scanned projects now arrive with tech stack and live URL
+  instead of empty skeletons.
 
 ## v6.9 — 2026-06-09
 
