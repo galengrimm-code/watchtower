@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v6.8
+# Security Scan Prompt v6.9
 
 Scan this project and give me a full security audit and code analysis.
+
+**v6.9 additions (2026-06-09) — Edge Function secrets, client-prefix misnaming, prompt bug fixes:**
+- STEP 1: Supabase Edge Function secret sweep — grep `supabase/functions/` for hardcoded keys/tokens/JWTs (uses existing `hardcoded-secrets` category; Edge Function source ships to version control and the deploy bundle)
+- STEP 1: client-prefix env var misnaming grep — `NEXT_PUBLIC_*`/`VITE_*` names containing SECRET/SERVICE/PRIVATE/ADMIN/WEBHOOK ship to the client bundle by framework convention regardless of intent (uses existing `env-exposure` category)
+- Fix: NVD API key prose said "query param"; NVD API 2.0 takes the key as the `apiKey` request header, which is what the curl examples already did. Prose corrected to match.
+- Fix: STEP 3 / claude-md-template SCAN:AUTO marker examples were frozen at "v6.4" — now read "v6.9"; always stamp the marker with the version from this prompt's title line.
+- Phase 11: Windows path note — `~/.claude/` paths resolve to `%USERPROFILE%\.claude\`; use `sha256sum` from Git Bash or `Get-FileHash` in PowerShell.
 
 **v6.8 additions (2026-06-06) — relax file-size heuristic for AI-readable code:**
 - `file-over-500` threshold raised from 500 to **1500 lines, uniformly across all file types** (.js, .ts, .jsx, .tsx, .css, .html, .py, etc.). The prior 500-line cutoff was 2000s-era human-reading guidance; AI-readable code can be denser without becoming unworkable, and the proxy weakens as humans stop being the primary readers.
@@ -160,6 +167,19 @@ Run these commands and include the results:
   - If auth route has NO rate-limiting AND NO captcha → flag `auth-endpoint-no-rate-limit` severity moderate. Text: "Auth route {path} has no rate-limiting or captcha. Credential-stuffing attacker can try 10,000+ username/password combos with no friction. Especially dangerous if the route reveals timing/error differences between 'user exists' and 'user doesn't exist'."
   - Fix: wrap the handler in `@upstash/ratelimit` (sliding window, 5 attempts per IP per 15 min), OR add a Cloudflare Turnstile / hCaptcha challenge for unauthenticated requests, OR both.
   - Note: this is in addition to the broader `no-rate-limiting` check on all public API routes — auth routes are higher-priority because account takeover is the goal.
+
+- **Supabase Edge Function secret sweep** (v6.9 addition; projects with a `supabase/functions/` directory):
+  - Run `grep -rn "sk_live_\|sk_test_\|sk-ant-\|sk-proj-\|AIzaSy\|whsec_\|eyJhbGciOi" supabase/functions/ --include="*.ts" --include="*.js" 2>/dev/null`
+  - Also check for inline service-role assignment: `grep -rn "SERVICE_ROLE[A-Z_]*\s*[:=]\s*['\"]" supabase/functions/ 2>/dev/null`
+  - Edge Functions read secrets via `Deno.env.get(...)`; any literal key/token/JWT in function source is committed to version control and shipped in the deploy bundle
+  - Flag each as `hardcoded-secrets` severity critical. Text: "Edge Function {path} hardcodes a {key type} — move to `supabase secrets set NAME` and read via `Deno.env.get('NAME')`." Refer to the credential by variable name or key type only — never quote any value characters in the flag text.
+  - Count service_role references inside `supabase/functions/` toward the excess-service-role-surface file count.
+
+- **Client-prefix env var misnaming** (v6.9 addition; Next.js and Vite projects):
+  - Run `grep -rn "NEXT_PUBLIC_[A-Z0-9_]*\(SECRET\|SERVICE\|PRIVATE\|ADMIN\|WEBHOOK\)\|VITE_[A-Z0-9_]*\(SECRET\|SERVICE\|PRIVATE\|ADMIN\|WEBHOOK\)" .env .env.* src app pages lib --exclude-dir=node_modules 2>/dev/null`
+  - These prefixes ship the value to the client bundle by framework convention — the NAME itself is the leak, regardless of where the value lives. A correctly-named secret read server-side is fine; a `VITE_STRIPE_SECRET_KEY` is compromised the moment the bundle builds.
+  - Flag as `env-exposure`. Severity critical if a value is assigned in a tracked file or the var is read in shipped client code; moderate if the name only appears in `.env.example`.
+  - Fix: drop the public prefix, move the read to a server-only path (API route, server component, Edge Function), and rotate the value if a build ever shipped with it.
 
 Also extract the deployed URL:
 - Check vercel.json for "alias" or "domains" fields
@@ -615,7 +635,7 @@ Cross-check every `ai-mcp-cve` flag (and every installed MCP/skill/plugin packag
 https://services.nvd.nist.gov/rest/json/cves/2.0
 ```
 
-Rate limits without an API key: 5 requests / 30 seconds. With a free API key (instant signup at https://nvd.nist.gov/developers/request-an-api-key), 50 / 30 seconds. If `~/.claude/.env` contains `NVD_API_KEY=...`, send it as the `apiKey` query param.
+Rate limits without an API key: 5 requests / 30 seconds. With a free API key (instant signup at https://nvd.nist.gov/developers/request-an-api-key), 50 / 30 seconds. If `~/.claude/.env` contains `NVD_API_KEY=...`, send it as the `apiKey` request header (as the curl examples below do — NVD API 2.0 takes the key as a header, not a query param).
 
 #### Step A: Confirm each `ai-mcp-cve` flag against NVD by CVE ID
 
@@ -684,6 +704,8 @@ For the unauthenticated rate limit (5/30s), insert a 6-second sleep between NVD 
 ### Phase 11: Memory file hash drift detection (v6.5 addition)
 
 Memory poisoning (threat-db attack technique T002, T027) plants persistent instructions in CLAUDE.md / MEMORY.md / AGENTS.md that survive sessions and influence every Claude run. Phase 5 already greps for prompt-injection language, but a sophisticated attacker uses subtle phrasing that grep won't catch. Hash-based drift detection is the second layer.
+
+Windows note (v6.9): `~/.claude/` resolves to `%USERPROFILE%\.claude\`. Run the hash commands from Git Bash (where `sha256sum` and `~` both work), or use `Get-FileHash -Algorithm SHA256` in PowerShell.
 
 #### Step A: Compute current hashes
 
@@ -972,7 +994,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Current focus:** {leave blank for user to fill}
 - **Next:** Review scan findings and address any P1/P2 flags.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v6.4. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v6.9. Do not edit this section manually. -->
 
 ## Tech Stack
 
@@ -1040,7 +1062,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
-- **Scan prompt version:** v6.4
+- **Scan prompt version:** v6.9
 
 <!-- SCAN:AUTO:END -->
 

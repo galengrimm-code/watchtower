@@ -16,6 +16,7 @@ Rules:
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,10 +36,10 @@ def load_config():
 
 def resolve_prompt_path(config):
     """promptsRoot from config overrides the default <watchtowerRoot>/prompts/.
-    Lets the runtime point at a shared methodology folder (e.g., a separate
-    public/upstream watchtower repo) without duplicating prompts/. Fails loud
-    if the resolved path doesn't exist — silently shipping scanVersion="unknown"
-    produces misleading commit messages and apps.js metadata."""
+    Lets the runtime point at a shared methodology folder (e.g., the public
+    watchtower repo) without duplicating prompts/. Fails loud if the resolved
+    path doesn't exist — silently shipping scanVersion="unknown" produces
+    misleading commit messages and apps.js metadata."""
     prompts_root = config.get("promptsRoot")
     if prompts_root:
         path = Path(prompts_root) / "security-scan-prompt.md"
@@ -112,9 +113,12 @@ def find_app_block(content, app_name):
     Returns (start_brace, end_brace_exclusive) where text[start_brace] == '{'
     and text[end_brace_exclusive-1] == '}'.
     """
-    name_idx = content.find(f'name: "{app_name}"')
-    if name_idx == -1:
+    # Line-anchored so a flag text / description that merely *mentions*
+    # `name: "X"` mid-line can never be mistaken for the field itself.
+    m = re.search(r'^\s*name: "' + re.escape(app_name) + r'"', content, re.MULTILINE)
+    if m is None:
         return None
+    name_idx = m.start()
     # Walk backward to the opening '{' of this object
     i = name_idx
     while i > 0 and content[i] != "{":
@@ -663,6 +667,7 @@ def main():
     global SCAN_DATE, SCAN_VERSION, SLUG_TO_APP_NAME
     parser = argparse.ArgumentParser(description="Merge scan JSONs into data/apps.js.")
     parser.add_argument("--date", default=None, help="Scan date (YYYY-MM-DD). Defaults to today (UTC).")
+    parser.add_argument("--only-slug", default=None, help="Only merge this slug's scan; leave every other app entry (and its lastScanned) untouched.")
     args = parser.parse_args()
 
     SCAN_DATE = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -686,6 +691,8 @@ def main():
     # Process existing apps first
     new_app_entries = []
     for slug, app_name in SLUG_TO_APP_NAME.items():
+        if args.only_slug and slug != args.only_slug:
+            continue
         scan_path = SCANS / f"{slug}-{SCAN_DATE}.json"
         if not scan_path.exists():
             print(f"SKIP {slug}: no scan file")
@@ -802,9 +809,14 @@ def main():
             end_idx = end_idx + len(insertion)
             report.append(f"NEW   {slug:<22s} added as new APPS entry")
 
-    # Write final
+    # Write final, then verify the result is still parseable JS. A merge bug here
+    # corrupts the served dashboard dataset, so fail loud and restore the backup.
     APPS_JS.write_text(content, encoding="utf-8")
-    print(f"\nWrote {APPS_JS} ({len(content)} chars)")
+    check = subprocess.run(["node", "--check", str(APPS_JS)], capture_output=True, text=True)
+    if check.returncode != 0:
+        APPS_JS.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
+        sys.exit(f"ERROR: merged apps.js failed `node --check` — restored backup.\n{check.stderr.strip()}")
+    print(f"\nWrote {APPS_JS} ({len(content)} chars) — node --check passed")
     print()
     for line in report:
         print(line)

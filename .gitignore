@@ -3,6 +3,7 @@
 data/apps.js
 data/portfolio-stats.js
 data/ai-tool-intel.js
+data/cycle-stats.js
 
 # Per-scan history (large, frequently updated, and project-specific).
 scans/*.json

@@ -40,7 +40,7 @@ def parse_flags(claude_md_path):
         content = f.read()
     m = re.search(r'<!-- SCAN:AUTO:START\b[^>]*-->(.*?)<!-- SCAN:AUTO:END\b', content, re.DOTALL)
     if not m:
-        m = re.search(r'<!-- SCAN:AUTO:START[^>]*-->(.*?)<!-- SCAN:AUTO:END', content, re.DOTALL)
+        m = re.search(r'<!-- SCAN:AUTO:START[^>]*-->(.*?)<!-- SCAN:AUTO:END(?!\w)', content, re.DOTALL)
         if not m:
             return []
     scan_section = m.group(1)

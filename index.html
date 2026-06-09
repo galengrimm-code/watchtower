@@ -4,12 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Watchtower — Portfolio Observability</title>
-<link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="manifest" href="site.webmanifest">
-<meta name="theme-color" content="#0a0a0a">
+<meta name="theme-color" content="#050a10">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -47,6 +46,36 @@
     line-height: 1.5;
   }
 
+  /* ---- Ambient hi-tech backdrop — echoes the Watch Tower icon (navy field,
+     green scan glow, blueprint grid, ghosted tower watermark). Fixed, behind
+     all content, non-interactive. ---- */
+  #bg-fx {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden;
+    background:
+      radial-gradient(1100px 760px at 80% -10%, rgba(67,214,146,0.13), transparent 60%),
+      radial-gradient(820px 540px at 103% 3%, rgba(22,167,102,0.10), transparent 55%),
+      linear-gradient(180deg, #070e16 0%, #050a10 60%, #04060b 100%);
+  }
+  #bg-fx::before {
+    content: ""; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(125,165,185,0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(125,165,185,0.06) 1px, transparent 1px);
+    background-size: 46px 46px;
+    -webkit-mask-image: radial-gradient(135% 95% at 82% -5%, #000 8%, transparent 72%);
+            mask-image: radial-gradient(135% 95% at 82% -5%, #000 8%, transparent 72%);
+  }
+  #bg-fx::after {
+    content: ""; position: absolute;
+    right: -40px; bottom: -50px;
+    width: min(62vw, 760px); height: min(62vw, 760px);
+    background: url("icon-512.png") no-repeat center / contain;
+    mix-blend-mode: screen; opacity: 0.11;
+    -webkit-mask-image: radial-gradient(circle at 50% 46%, #000 32%, transparent 70%);
+            mask-image: radial-gradient(circle at 50% 46%, #000 32%, transparent 70%);
+  }
+  @media (max-width: 640px) { #bg-fx::after { opacity: 0.08; right: -80px; } }
+
   .container { max-width: 940px; margin: 0 auto; }
 
   .header { margin-bottom: 32px; }
@@ -55,7 +84,7 @@
   .header .sub { font-size: 13px; color: var(--text-faint); font-family: var(--mono); }
   .header p { font-size: 14px; color: var(--text-dim); }
 
-  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 28px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 28px; }
   .stat-card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -359,7 +388,7 @@
   .priority-low { background: #1a2a1a; border: 1px solid #2a4a2a; color: #88cc88; }
   .priority-none { background: #1a1a1a; border: 1px solid #2a2a2a; color: #888; }
 
-  /* Watchtower discipline badges — coverage pips + CLAUDE.md adherence */
+  /* Watch Tower discipline badges — coverage pips + CLAUDE.md adherence */
   .cov-pips {
     display: inline-flex; gap: 2px; align-items: center;
     padding: 3px 6px; border-radius: 4px;
@@ -378,7 +407,7 @@
   .claude-md-bad  { background: #3a1111; border: 1px solid #5a2222; color: #ff8888; }
   .claude-md-none { background: #1a1a1a; border: 1px solid #2a2a2a; color: #666; }
 
-  /* Watchtower stale flag age */
+  /* Watch Tower stale flag age */
   .flag-age-badge {
     display: inline-block; font-family: var(--mono); font-size: 10px;
     padding: 1px 6px; border-radius: 3px; margin-left: 6px;
@@ -453,9 +482,92 @@
     .stats > .stat-card:nth-child(4) { grid-column: 1 / 3; }
     .stats > .stat-card:nth-child(5) { grid-column: 3 / 4; }
   }
+
+  /* ---- PDF export (native print-to-PDF, zero dependencies) ---- */
+  .pdf-export-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 2px 0 14px; padding: 5px 12px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.03em;
+    color: var(--text); background: rgba(255,255,255,0.04);
+    border: 1px solid var(--cat-border, var(--cat-border-default));
+    border-radius: 6px; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+  }
+  .pdf-export-btn:hover { background: rgba(255,255,255,0.10); border-color: #555; }
+
+  /* ---- Sync-status banner (Phase 0.5 stale/dirty repos from last scan) ---- */
+  .sync-banner {
+    display: flex; align-items: flex-start; gap: 12px;
+    margin: 0 0 18px; padding: 12px 14px;
+    background: rgba(232,197,71,0.07);
+    border: 1px solid rgba(232,197,71,0.30);
+    border-left: 3px solid var(--yellow, #e8c547);
+    border-radius: 8px;
+  }
+  .sync-banner-icon { color: var(--yellow, #e8c547); font-size: 15px; line-height: 1.35; }
+  .sync-banner-body { flex: 1; min-width: 0; }
+  .sync-banner-title { font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 3px; }
+  .sync-banner-detail { color: var(--text-dim); font-family: var(--mono); font-size: 11px; line-height: 1.55; }
+  .sync-banner-dismiss { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 14px; padding: 0 2px; line-height: 1; }
+  .sync-banner-dismiss:hover { color: var(--text); }
+
+  #pdf-report { display: none; }
+
+  @media print {
+    /* Show only the generated report; hide the live dashboard */
+    body > * { display: none !important; }
+    body > #pdf-report { display: block !important; }
+
+    /* Force the browser to print the dashboard's real colors and dark backgrounds
+       (no "Background graphics" toggle required). This keeps the export looking like
+       the actual app instead of a washed-out light page, and lets the section helpers
+       render exactly as they do on the card — severity colors, accents and all. */
+    #pdf-report, #pdf-report * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    #pdf-report .pdf-export-btn { display: none !important; }
+
+    /* Dark page in the app theme. A block background paints across page breaks,
+       so the dark fill carries onto every page. */
+    @page { margin: 0; }
+    html, body { background: var(--bg) !important; }
+    #pdf-report {
+      display: block; background: var(--bg); color: var(--text);
+      font-size: 12px; line-height: 1.5; padding: 15mm 14mm;
+      font-family: var(--sans, system-ui, sans-serif);
+    }
+
+    /* Always expand collapsibles in the export */
+    #pdf-report .changelog-body { display: block !important; }
+    #pdf-report .changelog-toggle { cursor: default; }
+
+    /* Branded header — mirrors the dashboard card top */
+    #pdf-report .pdf-top {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 12px 0 14px; margin-bottom: 4px;
+      border-top: 3px solid var(--cat-accent, #444);
+      border-bottom: 1px solid var(--cat-border, #222);
+    }
+    #pdf-report .pdf-top .card-icon, #pdf-report .pdf-top .card-icon-placeholder {
+      width: 46px; height: 46px; border-radius: 11px; flex: 0 0 auto;
+    }
+    #pdf-report .pdf-head-info { flex: 1; min-width: 0; }
+    #pdf-report .pdf-h1 { font-size: 22px; font-weight: 800; margin: 0 0 5px; color: var(--text); }
+    #pdf-report .pdf-tags { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; margin-bottom: 7px; }
+    #pdf-report .pdf-status { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+    #pdf-report .pdf-desc { font-size: 12px; color: var(--text-dim); }
+    #pdf-report .pdf-meta { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin: 12px 0; }
+    #pdf-report .pdf-meta div { margin: 1px 0; }
+    #pdf-report .pdf-foot { margin-top: 20px; padding-top: 8px; border-top: 1px solid #222; font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+
+    /* Keep sections and flags from splitting awkwardly across pages */
+    #pdf-report .env-section, #pdf-report .flags-section, #pdf-report .tech-stack, #pdf-report .flag-item { break-inside: avoid; }
+  }
 </style>
 </head>
 <body>
+
+<div id="bg-fx" aria-hidden="true"></div>
 
 <!-- Flag Explanation Modal -->
 <div class="flag-modal-overlay" id="flag-modal-overlay" onclick="closeFlagModal()">
@@ -494,8 +606,10 @@
       <h1>Watchtower</h1>
       <span class="sub" id="header-subtitle"></span>
     </div>
-    <p>Project portfolio, tech stacks &amp; flags</p>
+    <p>Project portfolio, tech stacks &amp; flags — Updated <span id="header-updated">…</span></p>
   </div>
+
+  <div id="sync-banner-mount"></div>
 
   <div class="stats" id="stats"></div>
   <div class="stat-detail" id="stat-detail-critical"></div>
@@ -503,6 +617,8 @@
   <div class="stat-detail" id="stat-detail-other"></div>
   <div class="stat-detail" id="stat-detail-active"></div>
   <div class="stat-detail" id="stat-detail-aienv"></div>
+  <div class="stat-detail" id="stat-detail-scanned"></div>
+  <div class="stat-detail" id="stat-detail-velocity"></div>
   <div id="panel-burndown"></div>
   <div class="insights-toggle" id="insights-toggle" onclick="toggleInsights()">▸ Portfolio Insights</div>
   <div class="insights-panels" id="insights-panels" style="display:none">
@@ -537,6 +653,7 @@
 
 <script src="data/ai-tool-intel.js"></script>
 <script src="data/portfolio-stats.js"></script>
+<script src="data/cycle-stats.js"></script>
 <script src="data/apps.js"></script>
 <script>
 // --- Flag Severity Classification ---
@@ -1078,7 +1195,7 @@ const FLAG_EXPLANATIONS = {
   },
   "file-over-500": {
     title: "Large File (500+ Lines)",
-    what: "Files over 500 lines are harder to maintain, review, and test. They often indicate a component or module is doing too much and should be split.",
+    what: "Files over 1500 lines (raised from 500 in scan v6.8) are harder for both humans and AI agents to navigate without missing things. Cohesion matters more than raw line count — a 1200-line file doing one thing is fine, a 300-line file doing six things is worse. Treat this as a 'consider splitting' signal, not a mandatory refactor.",
     severity: "Maintenance",
     fix: "Extract logical sections into separate files/components. Common splits: UI components, data fetching hooks, utility functions, constants, types."
   },
@@ -1507,7 +1624,10 @@ function findExplanation(flagText, category) {
   if (category && FLAG_EXPLANATIONS[category]) {
     return FLAG_EXPLANATIONS[category];
   }
-  // Regex fallback for legacy/manual flags
+  // A structured flag with a category the KB doesn't know gets the generic
+  // modal — fuzzy-matching its text against KB keys picks wrong entries.
+  if (category) return null;
+  // Regex fallback for legacy string flags only (no category to match on)
   for (const [key, explanation] of Object.entries(FLAG_EXPLANATIONS)) {
     if (new RegExp(key, 'i').test(flagText)) {
       return explanation;
@@ -1962,7 +2082,7 @@ function metricsHTML(metrics) {
   // to 0 with Number() and the OR-fallback.
   const _filesOver500 = Number(metrics.filesOver500 ?? 0) || 0;
   const _duplicationAreas = Number(metrics.duplicationAreas ?? 0) || 0;
-  html += `<div style="background:#0d0d0d;border:1px solid #222;border-radius:6px;padding:8px 10px;text-align:center"><div style="font-size:16px;font-weight:700;font-family:var(--mono);color:${_filesOver500 > 0 ? '#e0a030' : '#4caf50'}">${_filesOver500}</div><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.05em;font-family:var(--mono);margin-top:2px">Files 500+</div></div>`;
+  html += `<div style="background:#0d0d0d;border:1px solid #222;border-radius:6px;padding:8px 10px;text-align:center"><div style="font-size:16px;font-weight:700;font-family:var(--mono);color:${_filesOver500 > 0 ? '#e0a030' : '#4caf50'}">${_filesOver500}</div><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.05em;font-family:var(--mono);margin-top:2px">Files 1500+</div></div>`;
   html += `<div style="background:#0d0d0d;border:1px solid #222;border-radius:6px;padding:8px 10px;text-align:center"><div style="font-size:16px;font-weight:700;font-family:var(--mono);color:${_duplicationAreas > 0 ? '#e0a030' : '#4caf50'}">${_duplicationAreas}</div><div style="font-size:9px;color:#555;text-transform:uppercase;letter-spacing:0.05em;font-family:var(--mono);margin-top:2px">Duplication</div></div>`;
   html += `</div>`;
 
@@ -2343,7 +2463,7 @@ function flagsHTML(flags, scanned, appName) {
       const escaped = text.replace(/'/g, "\\'").replace(/"/g, "&quot;");
       const fid = storeFlagObj(f);
       const age = flagAgeBadge(appName, cat);
-      return `<div class="flag-item ${sevClass}" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon">⚠</span><span>${text}<span class="severity-badge ${badgeClass}">${sevLabel}</span>${age}</span></div>`;
+      return `<div class="flag-item ${sevClass}" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon">⚠</span><span>${escHtml(text)}<span class="severity-badge ${badgeClass}">${sevLabel}</span>${age}</span></div>`;
     }).join("");
   }
 
@@ -2353,7 +2473,7 @@ function flagsHTML(flags, scanned, appName) {
       const cat = f.category || '';
       const escaped = f.text.replace(/'/g, "\\'").replace(/"/g, "&quot;");
       const fid = storeFlagObj(f);
-      return `<div class="flag-item flag-accepted" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon" style="color:#555">○</span><span>${f.text}<span class="severity-badge severity-accepted">accepted</span>${f.note ? `<div class="flag-accepted-note">${f.note}</div>` : ''}</span></div>`;
+      return `<div class="flag-item flag-accepted" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon" style="color:#555">○</span><span>${escHtml(f.text)}<span class="severity-badge severity-accepted">accepted</span>${f.note ? `<div class="flag-accepted-note">${escHtml(f.note)}</div>` : ''}</span></div>`;
     }).join("");
     html += `</div>`;
   }
@@ -2364,7 +2484,7 @@ function flagsHTML(flags, scanned, appName) {
       const cat = f.category || '';
       const escaped = f.text.replace(/'/g, "\\'").replace(/"/g, "&quot;");
       const fid = storeFlagObj(f);
-      return `<div class="flag-item flag-resolved" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon" style="color:#4a7a4a">✓</span><span>${f.text}<span class="severity-badge severity-resolved">resolved</span></span></div>`;
+      return `<div class="flag-item flag-resolved" onclick="event.stopPropagation();showFlagModal('${escaped}','${cat}',getFlagObj('${fid}'))"><span class="flag-icon" style="color:#4a7a4a">✓</span><span>${escHtml(f.text)}<span class="severity-badge severity-resolved">resolved</span></span></div>`;
     }).join("");
     html += `</div>`;
   }
@@ -2533,11 +2653,48 @@ function claudeMdBadge(app) {
   return `<span class="claude-md-pill ${cls}" title="${tip}">📄 ${hand}L</span>`;
 }
 
+// Ordered list of icon sources to try, best first:
+//  1. self-hosted icon under the dashboard's own /icons/ (immune to the app being offline)
+//  2. the icon path resolved against the app's live URL
+//  3. a favicon pulled from the app's domain via DuckDuckGo's icon service — but ONLY as a
+//     fallback when an icon is declared. Apps with no icon.src fall straight to the placeholder
+//     rather than showing DDG's generic globe (which would imply a dead app has a real icon).
+function iconCandidates(app) {
+  const c = [];
+  if (app.icon && app.icon.src) {
+    const s = app.icon.src;
+    if (/^\/?icons\//.test(s)) {
+      c.push(s.replace(/^\//, '')); // local, served from this dashboard — do NOT resolve against app.url
+    } else {
+      c.push(app.url ? new URL(s, app.url).href : s);
+    }
+    if (app.url) {
+      try { c.push('https://icons.duckduckgo.com/ip3/' + new URL(app.url).hostname + '.ico'); } catch (e) {}
+    }
+  }
+  return c;
+}
+
+// Walk to the next candidate on load failure; show the placeholder once exhausted.
+function iconFallback(img) {
+  let cands = [];
+  try { cands = JSON.parse(img.dataset.cands || '[]'); } catch (e) {}
+  const next = parseInt(img.dataset.i || '0', 10) + 1;
+  if (next < cands.length) {
+    img.dataset.i = String(next);
+    img.src = cands[next];
+  } else {
+    img.onerror = null;
+    img.style.display = 'none';
+    if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
+  }
+}
+
 function renderIcon(app) {
   if (app.icon && app.icon.src) {
     // Build the full URL for deployed apps or relative path for local
     const iconUrl = app.url ? new URL(app.icon.src, app.url).href : app.icon.src;
-    return `<img class="card-icon" src="${iconUrl}" alt="${app.name} icon" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="card-icon-placeholder" style="display:none">📱</div>`;
+    return `<img class="card-icon" src="${iconUrl}" alt="${escHtml(app.name)} icon" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="card-icon-placeholder" style="display:none">📱</div>`;
   }
   return `<div class="card-icon-placeholder">📱</div>`;
 }
@@ -2552,14 +2709,14 @@ function renderCard(app, idx) {
       ${renderIcon(app)}
       <div class="card-info">
         <div class="card-name-row">
-          <span class="card-name">${app.name}</span>
-          <span class="card-tag">${app.category}</span>
+          <span class="card-name">${escHtml(app.name)}</span>
+          <span class="card-tag">${escHtml(app.category)}</span>
           ${priorityBadge(app)}
           ${coverageBadge(app)}
           ${claudeMdBadge(app)}
           ${!app.scanned ? `<span style="color:#cca833;font-size:11px;font-family:var(--mono)">⏳</span>` : ''}
         </div>
-        <div class="card-desc">${app.description}</div>
+        <div class="card-desc">${escHtml(app.description)}</div>
       </div>
       ${ringSVG(app.completion)}
     </div>
@@ -2571,7 +2728,8 @@ function renderCard(app, idx) {
         ${app.repoVisibility ? `<span class="visibility-badge vis-${app.repoVisibility}" style="margin-left:8px">${app.repoVisibility === 'unknown' ? '? unknown' : app.repoVisibility === 'public' ? '🔓 public' : '🔒 private'}</span>` : ''}
       </div>
       ${app.lastUpdated ? `<div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-bottom:12px">Last updated: ${app.lastUpdated}</div>` : ''}
-      ${app.nextAction ? `<div class="next-action"><div class="section-label">Next Action</div><div class="next-action-text">${app.nextAction}</div></div>` : ''}
+      ${app.nextAction ? `<div class="next-action"><div class="section-label">Next Action</div><div class="next-action-text">${escHtml(app.nextAction)}</div></div>` : ''}
+      <button class="pdf-export-btn" data-pdf-export="${window.APPS.indexOf(app)}" onclick="event.stopPropagation();exportAppPdf(this.dataset.pdfExport)">⤓ Export PDF</button>
       ${techHTML(app.tech || {})}
       ${envHTML(app.envSecrets)}
       ${metricsHTML(app.metrics)}
@@ -2582,6 +2740,67 @@ function renderCard(app, idx) {
       ${changelogHTML(app.changelog, idx)}
     </div>
   </div>`;
+}
+
+// Minimal HTML-escape for scalar values interpolated into the export report.
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Build a clean, light-themed report from an app's data and open the browser's
+// print dialog (Save as PDF). Reuses the same section helpers the card uses, so
+// the export never drifts from what's on screen. The @media print stylesheet
+// recolors the dark sub-cards to an ink-friendly light layout. Resolved by APPS
+// index (not name) so the click target is unambiguous and nothing user-derived
+// is interpolated into the inline handler.
+let _pdfReportEl = null;
+function exportAppPdf(idx) {
+  const app = (window.APPS || [])[Number(idx)];
+  if (!app) return;
+  if (!_pdfReportEl) {
+    _pdfReportEl = document.createElement('div');
+    _pdfReportEl.id = 'pdf-report';
+    document.body.appendChild(_pdfReportEl);
+  }
+  const meta = [];
+  if (app.url) meta.push(`<div>Live: ${escHtml(app.url)}</div>`);
+  if (app.repoUrl) meta.push(`<div>Repo: ${escHtml(app.repoUrl)}</div>`);
+  if (app.repoVisibility) meta.push(`<div>Repo visibility: ${escHtml(app.repoVisibility)}</div>`);
+  if (app.lastUpdated) meta.push(`<div>Last updated: ${escHtml(app.lastUpdated)}</div>`);
+  if (app.lastScanned) meta.push(`<div>Last scanned: ${escHtml(app.lastScanned)}</div>`);
+  const completion = (app.completion ?? null) === null ? '—' : app.completion + '%';
+  const today = new Date().toISOString().slice(0, 10);
+  const styleVars = categoryStyleVars(app.category);
+  const header = `
+    <div class="pdf-top" style="${styleVars}">
+      ${renderIcon(app)}
+      <div class="pdf-head-info">
+        <div class="pdf-h1">${escHtml(app.name)}</div>
+        <div class="pdf-tags">
+          <span class="card-tag">${escHtml(app.category)}</span>
+          ${priorityBadge(app)}
+          ${coverageBadge(app)}
+          <span class="pdf-status">${completion} complete · ${app.scanned ? 'scanned' : 'not yet scanned'}</span>
+        </div>
+        <div class="pdf-desc">${escHtml(app.description)}</div>
+      </div>
+      ${app.completion != null ? ringSVG(app.completion) : ''}
+    </div>
+    <div class="pdf-meta">${meta.join('')}</div>
+    ${app.nextAction ? `<div class="env-section"><div class="section-label">Next Action</div><div>${escHtml(app.nextAction)}</div></div>` : ''}`;
+  _pdfReportEl.innerHTML = header
+    + techHTML(app.tech || {})
+    + envHTML(app.envSecrets)
+    + metricsHTML(app.metrics)
+    + securityPostureHTML(app.securityPosture)
+    + deployedSurfaceHTML(app.deployedSurface)
+    + operationalHealthHTML(app)
+    + flagsHTML(app.flags, app.scanned, app.name)
+    + changelogHTML(app.changelog, 'pdf')
+    + `<div class="pdf-foot">Generated by Watch Tower · ${today}</div>`;
+  window.print();
 }
 
 function sortApps(apps) {
@@ -2618,7 +2837,7 @@ function sortApps(apps) {
 
 let openStatDetail = null;
 function toggleStatDetail(type) {
-  const panels = ["critical", "high", "other", "active", "aienv"];
+  const panels = ["critical", "high", "other", "active", "aienv", "scanned", "velocity"];
   if (openStatDetail === type) {
     panels.forEach(p => {
       const el = document.getElementById("stat-detail-" + p);
@@ -2672,13 +2891,60 @@ function metricRow(label, count, color, id, appNames) {
   return `<div class="insight-row clickable" onclick="toggleDetail('${id}')"><span>${label}</span><span class="insight-row-val" style="color:${color}">${count}</span></div><div id="detail-${id}" class="insight-detail" style="display:none">${appNames.join("<br>")}</div>`;
 }
 
+// Surface Phase 0.5 sync problems from the last scan as a dismissible banner, so a
+// scan that ran against stale local code never silently reads as a clean audit.
+// Reads the repo-sync-stale / repo-sync-skipped-dirty flags Phase B appends per project.
+function syncBannerHTML() {
+  const stale = [], dirty = [];
+  (window.APPS || []).forEach(a => {
+    let s = false, d = false;
+    (a.flags || []).forEach(f => {
+      const cat = (f && typeof f === 'object' && f.category) || '';
+      if (cat === 'repo-sync-stale') s = true;
+      else if (cat === 'repo-sync-skipped-dirty') d = true;
+    });
+    if (s) stale.push(a.name);
+    if (d) dirty.push(a.name);
+  });
+  if (!stale.length && !dirty.length) return '';
+  const parts = [];
+  if (stale.length) parts.push(`<b>${stale.length} couldn't sync</b> (diverged / no upstream — possibly a failed prior push): ${stale.map(escHtml).join(', ')}`);
+  if (dirty.length) parts.push(`<b>${dirty.length} had uncommitted local changes</b>: ${dirty.map(escHtml).join(', ')}`);
+  return `<div class="sync-banner">
+    <span class="sync-banner-icon">⚠</span>
+    <div class="sync-banner-body">
+      <div class="sync-banner-title">Last scan ran against possibly-stale local code</div>
+      <div class="sync-banner-detail">${parts.join(' · ')}</div>
+    </div>
+    <button class="sync-banner-dismiss" title="Dismiss" onclick="this.closest('.sync-banner').remove()">✕</button>
+  </div>`;
+}
+
 function render() {
   let filtered = currentFilter === "All" ? [...APPS] : APPS.filter(a => a.category === currentFilter);
   filtered = sortApps(filtered);
 
+  // Header "Updated <date>" — pick the most recent lastUpdated or lastScanned
+  // across the whole portfolio. Anything touching an APPS entry refreshes this.
+  const headerUpdatedEl = document.getElementById("header-updated");
+  if (headerUpdatedEl) {
+    const dateStrs = APPS.flatMap(a => [a.lastUpdated, a.lastScanned].filter(Boolean));
+    if (dateStrs.length > 0) {
+      const max = dateStrs.sort().slice(-1)[0]; // ISO YYYY-MM-DD sorts lexicographically
+      const d = new Date(max + "T00:00:00Z");
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      headerUpdatedEl.textContent = `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+    } else {
+      headerUpdatedEl.textContent = "—";
+    }
+  }
+
   // Burndown chart sits between stats and the toggleable insight panels — always visible.
   const burndownEl = document.getElementById("panel-burndown");
   if (burndownEl) burndownEl.innerHTML = renderBurndownChart();
+
+  const _syncBanner = document.getElementById("sync-banner-mount");
+  if (_syncBanner) _syncBanner.innerHTML = syncBannerHTML();
 
   const TRACKED = APPS.filter(a => !categoryExcludedFromStats(a.category));
   const total = TRACKED.length;
@@ -2724,8 +2990,9 @@ function render() {
     `<div class="stat-card clickable${openStatDetail === 'critical' ? ' active' : ''}" id="stat-card-critical" onclick="toggleStatDetail('critical')"><div class="stat-value" style="color:${critColor}">${p1Flags}</div><div class="stat-label">P1 Critical</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'high' ? ' active' : ''}" id="stat-card-high" onclick="toggleStatDetail('high')"><div class="stat-value" style="color:${highColor}">${p2Flags}</div><div class="stat-label">P2 High</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'other' ? ' active' : ''}" id="stat-card-other" onclick="toggleStatDetail('other')"><div class="stat-value" style="color:${otherColor}">${p3Flags + p4Flags}</div><div class="stat-label">P3/P4 Other</div></div>` +
-    `<div class="stat-card"><div class="stat-value" style="color:#5b9bd5">${scanned}/${total}</div><div class="stat-label">Scanned</div></div>` +
-    `<div class="stat-card clickable${openStatDetail === 'aienv' ? ' active' : ''}" id="stat-card-aienv" onclick="toggleStatDetail('aienv')"><div class="stat-value" style="color:${aiColor}">${aiDisplay}</div><div class="stat-label">🛡️ AI Env</div></div>`;
+    `<div class="stat-card clickable${openStatDetail === 'scanned' ? ' active' : ''}" id="stat-card-scanned" onclick="toggleStatDetail('scanned')"><div class="stat-value" style="color:#5b9bd5">${scanned}/${total}</div><div class="stat-label">Scanned</div></div>` +
+    `<div class="stat-card clickable${openStatDetail === 'aienv' ? ' active' : ''}" id="stat-card-aienv" onclick="toggleStatDetail('aienv')"><div class="stat-value" style="color:${aiColor}">${aiDisplay}</div><div class="stat-label">🛡️ AI Env</div></div>` +
+    (window.CYCLE_STATS ? `<div class="stat-card clickable${openStatDetail === 'velocity' ? ' active' : ''}" id="stat-card-velocity" onclick="toggleStatDetail('velocity')"><div class="stat-value" style="color:#a78bfa">${window.CYCLE_STATS.velocity.commits.toLocaleString()}</div><div class="stat-label">⚡ Velocity</div></div>` : '');
 
   // Build AI Env detail panel
   const aiTitleColor = aiColor === "#4caf50" ? "#4caf50" : aiColor === "#F97316" ? "#F97316" : aiColor === "#ff4444" ? "#ff6666" : "#999";
@@ -2770,6 +3037,86 @@ function render() {
   document.getElementById("stat-detail-aienv").innerHTML =
     `<div class="stat-detail-title" style="color:${aiTitleColor}">${aiTitleText}</div>` + aiDetailBody +
     (intel.scannedAt ? `<div style="margin-top:10px;font-size:11px;color:#555;font-family:var(--mono)">Last AI scan: ${intel.scannedAt} · open Threat Landscape below for campaigns + CVEs</div>` : "");
+
+  // Build Scan Status panel — every project with a scan date, sorted stale-first
+  // so the user immediately sees what's overdue. Archived projects show too (they
+  // have scan history but are dimmed; date color = staleness vs the 21-day cadence).
+  const scannedProjects = APPS
+    .filter(a => a.scanned && a.lastScanned)
+    .slice()
+    .sort((a, b) => (a.lastScanned || "").localeCompare(b.lastScanned || ""));
+  const todayUTC = new Date().toISOString().slice(0, 10);
+  const daysBetween = (older, newer) => Math.round((new Date(newer) - new Date(older)) / 86400000);
+  let scannedDetailBody = "";
+  if (scannedProjects.length === 0) {
+    scannedDetailBody = `<div style="font-size:13px;color:#999;font-family:var(--mono)">No projects with scan dates yet.</div>`;
+  } else {
+    const rows = scannedProjects.map(a => {
+      const p1 = getCountByTier(a.flags, "P1");
+      const p2 = getCountByTier(a.flags, "P2");
+      const p3 = getCountByTier(a.flags, "P3");
+      const p4 = getCountByTier(a.flags, "P4");
+      const days = daysBetween(a.lastScanned, todayUTC);
+      const dateColor = days > 30 ? "#ff8888" : days > 21 ? "#fb923c" : "#999";
+      const isArchived = a.category === "Archived";
+      const archivedTag = isArchived ? ` <span style="color:#666;font-size:10px">(archived)</span>` : "";
+      const rowStyle = `border-bottom:1px solid #1f1f1f${isArchived ? ";opacity:0.6" : ""}`;
+      const cell = (v, color) => `<td style="padding:6px 8px;text-align:center;color:${v > 0 ? color : '#444'}">${v}</td>`;
+      return `<tr style="${rowStyle}">` +
+        `<td style="padding:6px 8px;color:#ccc">${a.name}${archivedTag}</td>` +
+        cell(p1, "#ff8888") + cell(p2, "#fb923c") + cell(p3, "#cca833") + cell(p4, "#888") +
+        `<td style="padding:6px 8px;text-align:right;color:${dateColor};white-space:nowrap">${a.lastScanned} <span style="color:#555;font-size:10px">(${days}d)</span></td>` +
+        `</tr>`;
+    }).join("");
+    scannedDetailBody = `<table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px">` +
+      `<thead><tr style="text-align:left;color:#888;border-bottom:1px solid #2a2a2a">` +
+      `<th style="padding:6px 8px">Project</th>` +
+      `<th style="padding:6px 8px;text-align:center;width:42px">P1</th>` +
+      `<th style="padding:6px 8px;text-align:center;width:42px">P2</th>` +
+      `<th style="padding:6px 8px;text-align:center;width:42px">P3</th>` +
+      `<th style="padding:6px 8px;text-align:center;width:42px">P4</th>` +
+      `<th style="padding:6px 8px;text-align:right">Last Scanned</th>` +
+      `</tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  document.getElementById("stat-detail-scanned").innerHTML =
+    `<div class="stat-detail-title" style="color:#5b9bd5">📅 Scan Status — sorted by stalest first (default cadence: ${(window.WATCHTOWER_CONFIG && window.WATCHTOWER_CONFIG.scanCadenceDays) || 21}d)</div>` + scannedDetailBody;
+
+  // Build cycle velocity panel from window.CYCLE_STATS (compute-cycle-stats.js output).
+  // Generated per scan cycle; panel and card both disappear gracefully if the file is absent.
+  const cs = window.CYCLE_STATS;
+  if (cs) {
+    const vRow = (label, val) => `<div class="insight-row"><span>${label}</span><span class="insight-row-val" style="color:#a78bfa">${val}</span></div>`;
+    const pDelta = tier => {
+      const cur = cs.posture.current[tier] || 0, prev = cs.posture.prior[tier] || 0, d = cur - prev;
+      const col = d > 0 ? "#ff6666" : d < 0 ? "#4caf50" : "#777";
+      const arrow = d > 0 ? `▲+${d}` : d < 0 ? `▼${d}` : "—";
+      return `<div class="insight-row"><span>${tier}</span><span class="insight-row-val">${prev} → ${cur} <span style="color:${col}">${arrow}</span></span></div>`;
+    };
+    document.getElementById("stat-detail-velocity").innerHTML =
+      `<div class="stat-detail-title" style="color:#a78bfa">⚡ Cycle Velocity — ${cs.priorDate} → ${cs.scanDate}</div>` +
+      `<div class="stat-detail-group"><div class="stat-detail-app">Shipping</div>` +
+        vRow("Commits", cs.velocity.commits.toLocaleString()) +
+        vRow("Lines", `+${cs.velocity.added.toLocaleString()} / −${cs.velocity.removed.toLocaleString()}`) +
+        vRow("Files touched", cs.velocity.filesTouched.toLocaleString()) +
+        vRow("Active repos", cs.velocity.activeRepos) +
+        vRow("Busiest", `${escHtml(cs.velocity.busiest.name)} (${cs.velocity.busiest.n} commits)`) +
+        vRow("Churniest", `${escHtml(cs.velocity.churniest.name)} (${cs.velocity.churniest.n.toLocaleString()} lines)`) +
+      `</div>` +
+      `<div class="stat-detail-group"><div class="stat-detail-app">Portfolio scale</div>` +
+        vRow("Total lines", cs.scale.totalLines.toLocaleString()) +
+        vRow("Components / Pages / API routes", `${cs.scale.components} / ${cs.scale.pages} / ${cs.scale.apiRoutes}`) +
+        vRow("Files over threshold", `${cs.scale.filesOver500} (largest: ${escHtml(cs.scale.largest.file)}, ${cs.scale.largest.lines.toLocaleString()} lines)`) +
+      `</div>` +
+      `<div class="stat-detail-group"><div class="stat-detail-app">Flag posture vs prior cycle</div>` +
+        pDelta("P1") + pDelta("P2") + pDelta("P3") + pDelta("P4") +
+      `</div>` +
+      `<div class="stat-detail-group"><div class="stat-detail-app">Highlights</div>` +
+        // mostImproved is null on cycles with no net flag reduction (first scan, flat, or worse)
+        vRow("Most improved", cs.highlights.mostImproved ? `${escHtml(cs.highlights.mostImproved.name)} (−${cs.highlights.mostImproved.drop})` : "—") +
+        // clean = zero P1/P2 only; these apps may still carry P3/P4 flags
+        vRow("No P1/P2 flags", cs.highlights.clean.length ? cs.highlights.clean.map(escHtml).join(", ") : "—") +
+      `</div>`;
+  }
 
   // Build critical flags detail panel grouped by app
   const critByApp = [];
