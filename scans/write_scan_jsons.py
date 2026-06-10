@@ -124,8 +124,9 @@ def parse_metrics(scan_section):
     if fo:
         val = fo.group(1).strip()
         # Filenames may or may not be backticked (older blocks use plain text),
-        # so count every "(N)" line-count on the line, not just backticked ones.
-        counts = [int(n.replace(',', '')) for n in re.findall(r'\((\d[\d,]*)\)', val)]
+        # and the size paren may carry an annotation ("(2,294 lines)",
+        # "(867 — dead)") — count every number-leading paren on the line.
+        counts = [int(n.replace(',', '')) for n in re.findall(r'\((\d[\d,]*)\b[^)]*\)', val)]
         if counts:
             metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
         else:
