@@ -21,6 +21,7 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 | Piece | What it does | Where it lives |
 |---|---|---|
 | Scan prompt | 1900+ lines of "what to check, what to flag," currently at v7.0 with OWASP Top 10 (2021) categorization, per-app strengths, and silent-failure / memory-growth sweeps | `prompts/security-scan-prompt.md` |
+| Repo audit prompt | Standalone one-shot quality audit (companion to the scan): proves the project builds/tests/boots, finds quality debt, ends with an executable fix plan. Calibrates to hobby / shared / commercial. Works without any Watchtower setup. | `prompts/repo-audit-prompt.md` |
 | Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel, and per-app A–F health grades | `index.html` (data populates over time from your scheduled scans) |
 | Helper scripts | Three small Python + Node scripts that parse CLAUDE.md scan blocks, merge results, and generate stats | `scans/` |
 | Scheduled-scan skill | The orchestrator that wires Phases 0 → A → B → B.5 → B.7 → C → D into a self-rescheduling loop on whatever cadence you configure (default: every 21 days) | `examples/triweekly-security-scan.SKILL.md.template` |

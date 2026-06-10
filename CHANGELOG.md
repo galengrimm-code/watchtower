@@ -7,6 +7,10 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## Repo Audit Prompt v1.0 — 2026-06-09
+
+New standalone companion prompt: `prompts/repo-audit-prompt.md`. A one-shot quality audit (distinct from the continuous security scan, versioned separately): proves the project actually builds/lints/tests/boots before judging anything, audits quality debt with dual-track findings (plain-English consequence for the owner + technical detail for the next AI session), carries a stack checklist distilled from the scan methodology (serverless state, RLS, Firebase rules, Stripe signatures, client-prefix env vars), calibrates all recommendations to a hobby / shared / commercial tier question, and ends with an executable three-bucket fix plan instead of a task table. Requires no Watchtower setup; reads the SCAN:AUTO block when one exists instead of re-auditing security.
+
 ## v7.0 — 2026-06-09
 
 Audit-dimension release: silent-failure and memory-growth sweeps, per-app strengths, A–F health grades. Adapted from community "repo audit" prompt patterns.
