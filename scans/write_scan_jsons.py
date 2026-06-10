@@ -147,12 +147,13 @@ def parse_metrics(scan_section):
 def parse_strengths(scan_section):
     """Extract the one-sentence "## Strengths" line (v7.0). Returns None when the
     section is absent (pre-v7.0 blocks) or holds only a placeholder."""
-    m = re.search(r'## Strengths\s*\n+(.+)', scan_section)
+    m = re.search(r'## Strengths\s*\n+(?!#)(.+)', scan_section)
     if not m:
         return None
     line = re.sub(r'^[-*]\s+', '', m.group(1).strip())
     line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line).strip('_ ')
-    if not line or line.startswith('{') or line.lower() in ('none', 'n/a'):
+    # An empty section would otherwise capture the next heading as "data".
+    if not line or line.startswith(('{', '#')) or line.lower() in ('none', 'n/a'):
         return None
     return line
 
