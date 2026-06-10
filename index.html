@@ -1194,7 +1194,7 @@ const FLAG_EXPLANATIONS = {
     fix: "Add to .gitignore: .env, .env.local, .env.*.local, .env.production. Verify with `git status` that .env files are ignored."
   },
   "file-over-500": {
-    title: "Large File (500+ Lines)",
+    title: "Large File (1500+ Lines)",
     what: "Files over 1500 lines (raised from 500 in scan v6.8) are harder for both humans and AI agents to navigate without missing things. Cohesion matters more than raw line count — a 1200-line file doing one thing is fine, a 300-line file doing six things is worse. Treat this as a 'consider splitting' signal, not a mandatory refactor.",
     severity: "Maintenance",
     fix: "Extract logical sections into separate files/components. Common splits: UI components, data fetching hooks, utility functions, constants, types."
@@ -3505,7 +3505,7 @@ function render() {
   const dupApps = scannedWithMetrics.filter(a => a.metrics.duplicationAreas > 0).sort((a, b) => b.metrics.duplicationAreas - a.metrics.duplicationAreas);
 
   let refactorHTML = `<div class="insight-panel-title" style="color:#e0a030">🔧 Refactor Candidates</div>`;
-  refactorHTML += `<div class="metrics-subsection">Large Files (500+ lines)</div>`;
+  refactorHTML += `<div class="metrics-subsection">Large Files (1500+ lines)</div>`;
   if (largeFileApps.length === 0) {
     refactorHTML += `<div class="insight-row"><span style="color:#4caf50">No large files detected</span></div>`;
   } else {

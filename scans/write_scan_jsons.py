@@ -112,12 +112,25 @@ def parse_metrics(scan_section):
         cm = re.search(r'\*\*%s:\*\*\s*~?([\d,]+)' % re.escape(label), section)
         if cm:
             metrics[key] = int(cm.group(1).replace(',', ''))
-    fo = re.search(r'\*\*Files over [\d,]+ lines:\*\*\s*(.+)', section)
+    # Heading varies by scan era: "Files over 500 lines:" / "Files over 1500 lines (v6.8):".
+    fo = re.search(r'\*\*Files over [\d,]+ lines[^:\n]*:\*\*\s*(.+)', section)
     if fo:
+        val = fo.group(1).strip()
         # Filenames may or may not be backticked (older blocks use plain text),
         # so count every "(N)" line-count on the line, not just backticked ones.
-        counts = [int(n.replace(',', '')) for n in re.findall(r'\((\d[\d,]*)\)', fo.group(1))]
-        metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
+        counts = [int(n.replace(',', '')) for n in re.findall(r'\((\d[\d,]*)\)', val)]
+        if counts:
+            metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
+        else:
+            bare = re.match(r'~?(\d[\d,]*)\b', val)
+            if bare:
+                # Legacy count-only line ("Files over 500 lines: 26") — no line
+                # counts to re-threshold, so take it at face value; the block
+                # regenerates in the current format on its next scheduled scan.
+                metrics["filesOver500"] = int(bare.group(1).replace(',', ''))
+            elif re.search(r'none', val, re.I):
+                metrics["filesOver500"] = 0
+            # otherwise omit — phase_c_update preserves the existing value
     return metrics
 
 

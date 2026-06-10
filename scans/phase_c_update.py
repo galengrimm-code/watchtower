@@ -617,7 +617,7 @@ def update_app(obj_text, scan, app_name):
         loc = find_top_level_field(obj_text, "metrics")
         if loc:
             existing = obj_text[loc[1]:loc[2]]
-            for key in ("codeLines", "dataLines", "duplicationAreas"):
+            for key in ("codeLines", "dataLines", "duplicationAreas", "filesOver500"):
                 if key not in merged:
                     km = re.search(r'\b%s:\s*(\d+)' % key, existing)
                     if km:
