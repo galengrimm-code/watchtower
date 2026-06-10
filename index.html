@@ -230,9 +230,11 @@
   .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .card-info { flex: 1; min-width: 0; }
   .card-name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
-  /* Health grade pins to the right edge of the name row so it sits in the same
-     column on every card regardless of app-name length. */
-  .grade-badge { margin-left: auto; flex-shrink: 0; }
+  /* Right rail: completion + health rings side by side, fixed column on every card. */
+  .card-rings { display: flex; gap: 10px; align-items: flex-start; flex-shrink: 0; }
+  .ring-col { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 44px; }
+  .ring-label { font-size: 8px; font-family: var(--mono); color: #555; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+  .health-ring { cursor: pointer; }
   .card-name { font-size: 17px; font-weight: 700; color: #f0f0f0; letter-spacing: -0.01em; }
   .card-tag {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
@@ -624,6 +626,7 @@
   <div class="stat-detail" id="stat-detail-aienv"></div>
   <div class="stat-detail" id="stat-detail-scanned"></div>
   <div class="stat-detail" id="stat-detail-velocity"></div>
+  <div class="stat-detail" id="stat-detail-gpa"></div>
   <div id="panel-burndown"></div>
   <div class="insights-toggle" id="insights-toggle" onclick="toggleInsights()">▸ Portfolio Insights</div>
   <div class="insights-panels" id="insights-panels" style="display:none">
@@ -656,6 +659,7 @@
   <div class="card-grid" id="grid"></div>
 </div>
 
+<script src="scans/grade-model.js"></script>
 <script src="data/ai-tool-intel.js"></script>
 <script src="data/portfolio-stats.js"></script>
 <script src="data/cycle-stats.js"></script>
@@ -2719,61 +2723,54 @@ function renderIcon(app) {
 }
 
 // ===== Health grade (v7.0) =====
-// Derived entirely from data the scan already emits — no new scan work.
-// Weights calibrated 2026-06-09 against the live portfolio so grades spread
-// meaningfully: clean recently-scanned apps reach A, flag-heavy stale apps fail.
-const GRADE_WEIGHTS = { P1: 30, P2: 10, P3: 2, P4: 0.5, p4Cap: 3, file: 1.5, fileCap: 5, noTests: 6, stale: 5, staleDays: 45 };
-
+// The formula lives in scans/grade-model.js (single source shared with
+// generate-portfolio-stats.js, which persists per-cycle scores into
+// PORTFOLIO_STATS.gradeHistory for the trend arrows).
 function healthGradeFor(app) {
-  if (!app.scanned || !app.lastScanned) return null;
-  const W = GRADE_WEIGHTS;
-  const counts = { P1: 0, P2: 0, P3: 0, P4: 0 };
-  for (const f of app.flags || []) {
-    const cls = classifyFlag(f);
-    if (counts[cls] !== undefined) counts[cls]++;
-  }
-  const parts = [];
-  let score = 100;
-  for (const p of ["P1", "P2", "P3", "P4"]) {
-    if (!counts[p]) continue;
-    const d = p === "P4" ? Math.min(counts.P4 * W.P4, W.p4Cap) : counts[p] * W[p];
-    score -= d;
-    parts.push(`−${d} · ${counts[p]} active ${p} flag${counts[p] !== 1 ? 's' : ''}`);
-  }
-  const fo = Number(app.metrics?.filesOver500 ?? 0) || 0;
-  if (fo) {
-    const d = Math.min(fo * W.file, W.fileCap);
-    score -= d;
-    parts.push(`−${d} · ${fo} file${fo !== 1 ? 's' : ''} over 1,500 lines`);
-  }
-  const testing = (app.tech?.testing || "").trim();
-  if (!testing || /^none/i.test(testing)) {
-    score -= W.noTests;
-    parts.push(`−${W.noTests} · no test framework`);
-  }
-  const ageDays = (Date.now() - new Date(app.lastScanned + "T00:00:00")) / 86400000;
-  if (ageDays > W.staleDays) {
-    score -= W.stale;
-    parts.push(`−${W.stale} · last scan ${Math.round(ageDays)} days old`);
-  }
-  score = Math.max(0, Math.round(score));
-  const letter =
-    score >= 97 ? "A+" : score >= 93 ? "A" : score >= 90 ? "A-" :
-    score >= 87 ? "B+" : score >= 83 ? "B" : score >= 80 ? "B-" :
-    score >= 77 ? "C+" : score >= 73 ? "C" : score >= 70 ? "C-" :
-    score >= 67 ? "D+" : score >= 63 ? "D" : score >= 60 ? "D-" : "F";
-  return { score, letter, parts };
+  const r = window.HEALTH_GRADE.scoreFor(app);
+  if (!r) return null;
+  return { score: r.score, letter: window.HEALTH_GRADE.letterFor(r.score), parts: r.parts };
 }
 
 function gradeColor(score) {
-  return score >= 90 ? "#4caf50" : score >= 80 ? "#a3c14a" : score >= 70 ? "#e0c030" : score >= 60 ? "#e0a030" : "#e05050";
+  return window.HEALTH_GRADE.colorFor(score);
 }
 
-function gradeBadge(app) {
+// Score delta vs the prior recorded cycle, or null when fewer than two cycles exist.
+function gradeTrendFor(app) {
+  const hist = (window.PORTFOLIO_STATS && window.PORTFOLIO_STATS.gradeHistory && window.PORTFOLIO_STATS.gradeHistory[app.name]) || [];
+  if (hist.length < 2) return null;
+  const cur = hist[hist.length - 1].score, prev = hist[hist.length - 2].score;
+  if (cur === prev) return null;
+  return { delta: cur - prev, prev, cur };
+}
+
+function gradeTrendArrow(app) {
+  const t = gradeTrendFor(app);
+  if (!t) return "";
+  const up = t.delta > 0;
+  return `<span title="${up ? "+" : ""}${t.delta} vs prior cycle (${t.prev} → ${t.cur})" style="color:${up ? "#4caf50" : "#ff6666"}">${up ? "▲" : "▼"}</span>`;
+}
+
+// Health ring — same visual language as the completion ring, letter centered,
+// arc fills to score/100, colored by grade. Click → breakdown modal.
+function healthRingSVG(app) {
   const g = healthGradeFor(app);
-  if (!g) return "";
+  if (!g) return `<div class="ring-col"><span class="ring-na">—</span><span class="ring-label">health</span></div>`;
+  const size = 44, r = (size - 6) / 2, circ = 2 * Math.PI * r;
+  const offset = circ - (g.score / 100) * circ;
   const c = gradeColor(g.score);
-  return `<span class="grade-badge" title="Health grade ${g.letter} (${g.score}/100) — click for breakdown" style="font-family:var(--mono);font-size:11px;font-weight:700;color:${c};border:1px solid ${c};border-radius:4px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation();showGradeModal(${window.APPS.indexOf(app)})">${g.letter}</span>`;
+  return `<div class="ring-col health-ring" title="Health grade ${g.letter} (${g.score}/100) — click for breakdown" onclick="event.stopPropagation();showGradeModal(${(window.APPS || []).indexOf(app)})">
+    <svg class="ring" width="${size}" height="${size}">
+      <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="#2a2a2a" stroke-width="3"/>
+      <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${c}" stroke-width="3"
+        stroke-dasharray="${circ}" stroke-dashoffset="${offset}" stroke-linecap="round"
+        transform="rotate(-90 ${size/2} ${size/2})" style="transition:stroke-dashoffset 0.6s ease"/>
+      <text x="${size/2}" y="${size/2 + 1}" text-anchor="middle" dominant-baseline="middle"
+        fill="${c}" font-size="13" font-weight="700" font-family="var(--mono)">${g.letter}</text>
+    </svg>
+    <span class="ring-label">health ${gradeTrendArrow(app)}</span>
+  </div>`;
 }
 
 function showGradeModal(idx) {
@@ -2791,7 +2788,9 @@ function showGradeModal(idx) {
   const exampleEl = document.getElementById('flag-modal-example');
   if (exampleEl) {
     exampleEl.style.display = 'block';
-    exampleEl.textContent = g.parts.length ? "This app's deductions:\n" + g.parts.join("\n") : "No deductions — clean scan.";
+    const t = gradeTrendFor(app);
+    const trendLine = t ? `\n\nTrend: ${t.delta > 0 ? "+" : ""}${t.delta} vs prior cycle (${t.prev} → ${t.cur})` : "";
+    exampleEl.textContent = (g.parts.length ? "This app's deductions:\n" + g.parts.join("\n") : "No deductions — clean scan.") + trendLine;
   }
   const fixEl = document.getElementById('flag-modal-fix');
   if (fixEl) {
@@ -2827,11 +2826,13 @@ function renderCard(app, idx) {
           ${coverageBadge(app)}
           ${claudeMdBadge(app)}
           ${!app.scanned ? `<span style="color:#cca833;font-size:11px;font-family:var(--mono)">⏳</span>` : ''}
-          ${gradeBadge(app)}
         </div>
         <div class="card-desc">${escHtml(app.description)}</div>
       </div>
-      ${ringSVG(app.completion)}
+      <div class="card-rings">
+        <div class="ring-col">${ringSVG(app.completion)}<span class="ring-label">done</span></div>
+        ${healthRingSVG(app)}
+      </div>
     </div>
     <div class="card-details">
       ${!app.scanned ? '<span class="not-scanned">⏳ Not yet scanned with Claude Code</span>' : ''}
@@ -2901,6 +2902,7 @@ function exportAppPdf(idx) {
         <div class="pdf-desc">${escHtml(app.description)}</div>
       </div>
       ${app.completion != null ? ringSVG(app.completion) : ''}
+      ${healthRingSVG(app)}
     </div>
     <div class="pdf-meta">${meta.join('')}</div>
     ${app.nextAction ? `<div class="env-section"><div class="section-label">Next Action</div><div>${escHtml(app.nextAction)}</div></div>` : ''}`;
@@ -2936,6 +2938,11 @@ function sortApps(apps) {
         return (a.completion ?? 999) - (b.completion ?? 999);
       case "mostComplete":
         return (b.completion ?? -1) - (a.completion ?? -1);
+      case "grade": {
+        // Worst grade first; ungraded apps sink to the bottom.
+        const ga = healthGradeFor(a), gb = healthGradeFor(b);
+        return (ga ? ga.score : 999) - (gb ? gb.score : 999);
+      }
       default:
         return 0;
     }
@@ -2952,7 +2959,7 @@ function sortApps(apps) {
 
 let openStatDetail = null;
 function toggleStatDetail(type) {
-  const panels = ["critical", "high", "other", "active", "aienv", "scanned", "velocity"];
+  const panels = ["critical", "high", "other", "active", "aienv", "scanned", "velocity", "gpa"];
   if (openStatDetail === type) {
     panels.forEach(p => {
       const el = document.getElementById("stat-detail-" + p);
@@ -3101,13 +3108,36 @@ function render() {
   else if (noScanYet) aiColor = "#777";  // no scan yet AND no per-app AI flags
   const aiDisplay = noScanYet ? "—" : aiFlagCount;
 
+  // Portfolio GPA — mean health score across stats-included graded apps.
+  const gradedTracked = TRACKED.map(a => ({ app: a, g: healthGradeFor(a) })).filter(x => x.g);
+  const gpaScore = gradedTracked.length ? Math.round(gradedTracked.reduce((s, x) => s + x.g.score, 0) / gradedTracked.length) : null;
+  const gpaLetter = gpaScore != null ? window.HEALTH_GRADE.letterFor(gpaScore) : "—";
+  const gpaColor = gpaScore != null ? gradeColor(gpaScore) : "#777";
+
   document.getElementById("stats").innerHTML =
     `<div class="stat-card clickable${openStatDetail === 'critical' ? ' active' : ''}" id="stat-card-critical" onclick="toggleStatDetail('critical')"><div class="stat-value" style="color:${critColor}">${p1Flags}</div><div class="stat-label">P1 Critical</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'high' ? ' active' : ''}" id="stat-card-high" onclick="toggleStatDetail('high')"><div class="stat-value" style="color:${highColor}">${p2Flags}</div><div class="stat-label">P2 High</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'other' ? ' active' : ''}" id="stat-card-other" onclick="toggleStatDetail('other')"><div class="stat-value" style="color:${otherColor}">${p3Flags + p4Flags}</div><div class="stat-label">P3/P4 Other</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'scanned' ? ' active' : ''}" id="stat-card-scanned" onclick="toggleStatDetail('scanned')"><div class="stat-value" style="color:#5b9bd5">${scanned}/${total}</div><div class="stat-label">Scanned</div></div>` +
     `<div class="stat-card clickable${openStatDetail === 'aienv' ? ' active' : ''}" id="stat-card-aienv" onclick="toggleStatDetail('aienv')"><div class="stat-value" style="color:${aiColor}">${aiDisplay}</div><div class="stat-label">🛡️ AI Env</div></div>` +
-    (window.CYCLE_STATS ? `<div class="stat-card clickable${openStatDetail === 'velocity' ? ' active' : ''}" id="stat-card-velocity" onclick="toggleStatDetail('velocity')"><div class="stat-value" style="color:#a78bfa">${window.CYCLE_STATS.velocity.commits.toLocaleString()}</div><div class="stat-label">⚡ Velocity</div></div>` : '');
+    (window.CYCLE_STATS ? `<div class="stat-card clickable${openStatDetail === 'velocity' ? ' active' : ''}" id="stat-card-velocity" onclick="toggleStatDetail('velocity')"><div class="stat-value" style="color:#a78bfa">${window.CYCLE_STATS.velocity.commits.toLocaleString()}</div><div class="stat-label">⚡ Velocity</div></div>` : '') +
+    `<div class="stat-card clickable${openStatDetail === 'gpa' ? ' active' : ''}" id="stat-card-gpa" onclick="toggleStatDetail('gpa')"><div class="stat-value" style="color:${gpaColor}">${gpaLetter}</div><div class="stat-label">🎓 Portfolio GPA</div></div>`;
+
+  // GPA panel — every graded app ranked worst-first; stats-excluded categories
+  // (Archived etc.) listed but dimmed and outside the average.
+  const allGraded = APPS.map(a => ({ app: a, g: healthGradeFor(a) })).filter(x => x.g)
+    .sort((x, y) => x.g.score - y.g.score);
+  const gpaRows = allGraded.map(({ app, g }) => {
+    const excluded = categoryExcludedFromStats(app.category);
+    const t = gradeTrendFor(app);
+    const trend = t ? ` <span style="color:${t.delta > 0 ? '#4caf50' : '#ff6666'};font-size:10px">${t.delta > 0 ? '▲+' + t.delta : '▼' + t.delta}</span>` : '';
+    return `<div class="insight-row"${excluded ? ' style="opacity:0.5"' : ''}>` +
+      `<span>${escHtml(app.name)}${excluded ? ' <span style="font-size:9px;color:#777">(not in GPA)</span>' : ''}</span>` +
+      `<span class="insight-row-val" style="color:${gradeColor(g.score)};font-family:var(--mono)">${window.HEALTH_GRADE.letterFor(g.score)} · ${g.score}${trend}</span></div>`;
+  }).join("");
+  document.getElementById("stat-detail-gpa").innerHTML =
+    `<div class="stat-detail-title" style="color:${gpaColor}">🎓 Portfolio GPA: ${gpaLetter}${gpaScore != null ? ` (${gpaScore}/100 across ${gradedTracked.length} apps)` : ''} — ranked worst-first. Click any app's health ring for its deduction breakdown.</div>` +
+    `<div class="stat-detail-group">${gpaRows}</div>`;
 
   // Build AI Env detail panel
   const aiTitleColor = aiColor === "#4caf50" ? "#4caf50" : aiColor === "#F97316" ? "#F97316" : aiColor === "#ff4444" ? "#ff6666" : "#999";
@@ -3700,6 +3730,7 @@ function render() {
     <button class="sort-btn${currentSort === 'flags' ? ' active' : ''}" onclick="setSort('flags')">⚠ Most flags</button>
     <button class="sort-btn${currentSort === 'completion' ? ' active-green' : ''}" onclick="setSort('completion')">% Least complete</button>
     <button class="sort-btn${currentSort === 'mostComplete' ? ' active-green' : ''}" onclick="setSort('mostComplete')">% Most complete</button>
+    <button class="sort-btn${currentSort === 'grade' ? ' active' : ''}" onclick="setSort('grade')">🎓 Worst grade first</button>
   `;
 
   document.getElementById("grid").innerHTML = filtered.map((app) => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Generate data/portfolio-stats.js for the Watchtower dashboard.
+// Generate data/portfolio-stats.js for the Watch Tower dashboard.
 // Reads watchtower.config.json for portfolio root + project list. Walks each
 // project's CLAUDE.md and package.json to compute adherence + tooling coverage,
 // then aggregates scans/*.json into a flag burndown + per-flag age map.
@@ -137,6 +137,51 @@ function computeFlagAges() {
   return firstSeen;
 }
 out.flagAges = computeFlagAges();
+
+// --- Health-grade history (v7.0 trend arrows) ---
+// Score every app in data/apps.js with the shared grade model and append one
+// {date, score} entry per app per generation date. Prior history is carried
+// forward from the existing portfolio-stats.js so trends survive regeneration.
+// The dashboard shows ▲/▼ once an app has two entries on different dates.
+function computeGradeHistory() {
+  const model = require('./grade-model.js');
+  const appsPath = path.join(WATCHTOWER_ROOT, 'data', 'apps.js');
+  if (!fs.existsSync(appsPath)) return {};
+
+  // data/apps.js assigns window.APPS — evaluate it with a window shim.
+  const sandbox = { window: {} };
+  try {
+    new Function('window', fs.readFileSync(appsPath, 'utf8'))(sandbox.window);
+  } catch (e) {
+    console.warn('gradeHistory: could not evaluate data/apps.js —', e.message);
+    return {};
+  }
+  const apps = sandbox.window.APPS || [];
+
+  // Carry forward existing history from the current output file.
+  let history = {};
+  if (fs.existsSync(OUT)) {
+    const prev = fs.readFileSync(OUT, 'utf8');
+    const m = prev.match(/window\.PORTFOLIO_STATS = (\{[\s\S]*?\});\n/);
+    if (m) {
+      try { history = JSON.parse(m[1]).gradeHistory || {}; } catch { /* fresh start */ }
+    }
+  }
+
+  const today = out.generated;
+  const MAX_ENTRIES = 12; // ~8 months of triweekly cycles
+  for (const app of apps) {
+    const r = model.scoreFor(app);
+    if (!r) continue;
+    const entries = history[app.name] || [];
+    const last = entries[entries.length - 1];
+    if (last && last.date === today) last.score = r.score; // same-day rerun updates in place
+    else entries.push({ date: today, score: r.score });
+    history[app.name] = entries.slice(-MAX_ENTRIES);
+  }
+  return history;
+}
+out.gradeHistory = computeGradeHistory();
 
 const categories = config.categories || {};
 
