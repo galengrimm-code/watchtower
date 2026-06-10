@@ -230,6 +230,9 @@
   .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
   .card-info { flex: 1; min-width: 0; }
   .card-name-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+  /* Health grade pins to the right edge of the name row so it sits in the same
+     column on every card regardless of app-name length. */
+  .grade-badge { margin-left: auto; flex-shrink: 0; }
   .card-name { font-size: 17px; font-weight: 700; color: #f0f0f0; letter-spacing: -0.01em; }
   .card-tag {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
@@ -254,7 +257,9 @@
   }
 
   .ring text { font-family: var(--mono); font-weight: 600; }
-  .ring-na { color: var(--text-dim); font-size: 12px; font-family: var(--mono); }
+  /* Same 44px footprint as the completion ring so the name row's right edge —
+     and the grade badge pinned to it — lands in the same column on every card. */
+  .ring-na { color: var(--text-dim); font-size: 12px; font-family: var(--mono); width: 44px; text-align: center; flex-shrink: 0; display: inline-block; }
   .next-action-text { font-size: 13px; color: var(--yellow); line-height: 1.4; }
 
   .card-details { display: none; margin-top: 18px; padding-top: 16px; }
@@ -2821,8 +2826,8 @@ function renderCard(app, idx) {
           ${priorityBadge(app)}
           ${coverageBadge(app)}
           ${claudeMdBadge(app)}
-          ${gradeBadge(app)}
           ${!app.scanned ? `<span style="color:#cca833;font-size:11px;font-family:var(--mono)">⏳</span>` : ''}
+          ${gradeBadge(app)}
         </div>
         <div class="card-desc">${escHtml(app.description)}</div>
       </div>
