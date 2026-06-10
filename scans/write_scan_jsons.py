@@ -101,17 +101,24 @@ def parse_metrics(scan_section):
     converts pre-v6.8 500-threshold lists to the current semantics.
     """
     m = re.search(r'## Metrics\s*\n(.*?)(?=\n## |\Z)', scan_section, re.DOTALL)
-    if not m:
-        return {}
-    section = m.group(1)
+    # Pre-template blocks store the same bold-labeled bullets inline (no
+    # "## Metrics" heading) — fall back to the whole SCAN:AUTO block so those
+    # projects still participate in the metrics-refresh path.
+    section = m.group(1) if m else scan_section
     tl = re.search(r'\*\*Total lines:\*\*\s*~?([\d,]+)', section)
     if not tl:
         return {}
     metrics = {"totalLines": int(tl.group(1).replace(',', ''))}
     for label, key in (("Components", "components"), ("Pages", "pages"), ("API routes", "apiRoutes")):
-        cm = re.search(r'\*\*%s:\*\*\s*~?([\d,]+)' % re.escape(label), section)
+        cm = re.search(r'\*\*%s:\*\*([^|\n]*)' % re.escape(label), section)
         if cm:
-            metrics[key] = int(cm.group(1).replace(',', ''))
+            # Mixed-format counts ("2 Vercel serverless (...) + 10 Cloud Function
+            # exports") sum every number OUTSIDE parentheses — parentheticals are
+            # clarifications ("0 (client-side SDK; 9 Cloud Functions)" is 0).
+            seg = re.sub(r'\([^)]*\)', ' ', cm.group(1))
+            nums = [int(n.replace(',', '')) for n in re.findall(r'\d[\d,]*', seg)]
+            if nums:
+                metrics[key] = sum(nums)
     # Heading varies by scan era: "Files over 500 lines:" / "Files over 1500 lines (v6.8):".
     fo = re.search(r'\*\*Files over [\d,]+ lines[^:\n]*:\*\*\s*(.+)', section)
     if fo:
@@ -123,14 +130,16 @@ def parse_metrics(scan_section):
             metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
         else:
             bare = re.match(r'~?(\d[\d,]*)\b', val)
-            if bare:
-                # Legacy count-only line ("Files over 500 lines: 26") — no line
-                # counts to re-threshold, so take it at face value; the block
-                # regenerates in the current format on its next scheduled scan.
-                metrics["filesOver500"] = int(bare.group(1).replace(',', ''))
+            if bare and int(bare.group(1).replace(',', '')) == 0:
+                # Bare 0 is threshold-independent: none over 500 implies none
+                # over 1,500.
+                metrics["filesOver500"] = 0
             elif re.search(r'none', val, re.I):
                 metrics["filesOver500"] = 0
-            # otherwise omit — phase_c_update preserves the existing value
+            # Nonzero count-only legacy lines ("Files over 500 lines: 26") are
+            # 500-threshold counts that can't be converted without per-file line
+            # counts — omit so phase_c_update preserves the existing value until
+            # the block regenerates in the current format on its next scan.
     return metrics
 
 
