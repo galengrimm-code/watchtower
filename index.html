@@ -1420,6 +1420,20 @@ const FLAG_EXPLANATIONS = {
     fix: "Replace in-memory stores with external persistent storage: Upstash Redis for rate limiting (free tier, Vercel-native), Redis/Memcached for caching, database-backed sessions. Check for any setInterval/setTimeout cleanup tasks that won't fire in short-lived functions.",
     example: "Broken on Vercel: const rateLimits = new Map() — resets on every cold start\nWorks: import { Ratelimit } from '@upstash/ratelimit' — persists across invocations"
   },
+  "swallowed-exception": {
+    title: "Swallowed Exception (Silent Failure)",
+    severity: "P3 Medium (P2 on auth/payment/webhook/data-write paths)",
+    what: "A catch (or Python except) block neither logs, rethrows, nor surfaces the error — failures vanish silently. A failed payment write, webhook verification, or database save can return success to the user while nothing actually happened, with no log line to debug from. Silent failures also hide attacks: a signature check that throws and gets swallowed is a check that doesn't exist.",
+    fix: "Log with context at minimum (console.error('save failed', err)), surface the error to the caller where the result matters, rethrow where the caller has better context. If ignoring is genuinely intentional (feature detection, AbortError), say so in a comment.",
+    example: "Silent data loss: try { await db.save(order) } catch (e) {} — order gone, user sees success\nFixed: catch (e) { console.error('order save failed', e); return res.status(500).json({ error: 'save failed' }) }"
+  },
+  "unbounded-growth": {
+    title: "Unbounded In-Memory Growth",
+    severity: "P3 Medium (P2 when attacker-growable on a long-running server)",
+    what: "A module-level collection (Map, Set, array, object) is written to from request handlers but never evicted — no delete, no TTL, no max-size. Memory grows with every request until the process dies. On serverless it OOMs warm instances under sustained traffic; on a long-running server (VPS, PM2) it's the classic slow leak that crashes at 3am. If the collection is keyed by user input (per-IP, per-session), an attacker can grow it on purpose.",
+    fix: "Bound it: lru-cache with a max, a TTL sweep that purges old entries, or move the state to Redis/Upstash/database where shared state belongs.",
+    example: "Leak: const seen = new Map(); handler: seen.set(req.ip, Date.now()) — grows forever\nFixed: const seen = new LRUCache({ max: 10000, ttl: 15 * 60 * 1000 })"
+  },
   "route-pattern-inconsistency": {
     title: "API Route Pattern Inconsistency",
     severity: "P3 Medium",
@@ -2699,6 +2713,99 @@ function renderIcon(app) {
   return `<div class="card-icon-placeholder">📱</div>`;
 }
 
+// ===== Health grade (v7.0) =====
+// Derived entirely from data the scan already emits — no new scan work.
+// Weights calibrated 2026-06-09 against the live portfolio so grades spread
+// meaningfully: clean recently-scanned apps reach A, flag-heavy stale apps fail.
+const GRADE_WEIGHTS = { P1: 30, P2: 10, P3: 2, P4: 0.5, p4Cap: 3, file: 1.5, fileCap: 5, noTests: 6, stale: 5, staleDays: 45 };
+
+function healthGradeFor(app) {
+  if (!app.scanned || !app.lastScanned) return null;
+  const W = GRADE_WEIGHTS;
+  const counts = { P1: 0, P2: 0, P3: 0, P4: 0 };
+  for (const f of app.flags || []) {
+    const cls = classifyFlag(f);
+    if (counts[cls] !== undefined) counts[cls]++;
+  }
+  const parts = [];
+  let score = 100;
+  for (const p of ["P1", "P2", "P3", "P4"]) {
+    if (!counts[p]) continue;
+    const d = p === "P4" ? Math.min(counts.P4 * W.P4, W.p4Cap) : counts[p] * W[p];
+    score -= d;
+    parts.push(`−${d} · ${counts[p]} active ${p} flag${counts[p] !== 1 ? 's' : ''}`);
+  }
+  const fo = Number(app.metrics?.filesOver500 ?? 0) || 0;
+  if (fo) {
+    const d = Math.min(fo * W.file, W.fileCap);
+    score -= d;
+    parts.push(`−${d} · ${fo} file${fo !== 1 ? 's' : ''} over 1,500 lines`);
+  }
+  const testing = (app.tech?.testing || "").trim();
+  if (!testing || /^none/i.test(testing)) {
+    score -= W.noTests;
+    parts.push(`−${W.noTests} · no test framework`);
+  }
+  const ageDays = (Date.now() - new Date(app.lastScanned + "T00:00:00")) / 86400000;
+  if (ageDays > W.staleDays) {
+    score -= W.stale;
+    parts.push(`−${W.stale} · last scan ${Math.round(ageDays)} days old`);
+  }
+  score = Math.max(0, Math.round(score));
+  const letter =
+    score >= 97 ? "A+" : score >= 93 ? "A" : score >= 90 ? "A-" :
+    score >= 87 ? "B+" : score >= 83 ? "B" : score >= 80 ? "B-" :
+    score >= 77 ? "C+" : score >= 73 ? "C" : score >= 70 ? "C-" :
+    score >= 67 ? "D+" : score >= 63 ? "D" : score >= 60 ? "D-" : "F";
+  return { score, letter, parts };
+}
+
+function gradeColor(score) {
+  return score >= 90 ? "#4caf50" : score >= 80 ? "#a3c14a" : score >= 70 ? "#e0c030" : score >= 60 ? "#e0a030" : "#e05050";
+}
+
+function gradeBadge(app) {
+  const g = healthGradeFor(app);
+  if (!g) return "";
+  const c = gradeColor(g.score);
+  return `<span class="grade-badge" title="Health grade ${g.letter} (${g.score}/100) — click for breakdown" style="font-family:var(--mono);font-size:11px;font-weight:700;color:${c};border:1px solid ${c};border-radius:4px;padding:1px 7px;cursor:pointer" onclick="event.stopPropagation();showGradeModal(${window.APPS.indexOf(app)})">${g.letter}</span>`;
+}
+
+function showGradeModal(idx) {
+  const app = (window.APPS || [])[Number(idx)];
+  if (!app) return;
+  const g = healthGradeFor(app);
+  if (!g) return;
+  document.getElementById('flag-modal-title').textContent = `Health Grade: ${g.letter} (${g.score}/100)`;
+  document.getElementById('flag-modal-flag').textContent = `${app.name} — composite computed from the latest scan's data; updates automatically as flags resolve and scans refresh.`;
+  const sevEl = document.getElementById('flag-modal-severity');
+  sevEl.textContent = g.letter;
+  sevEl.className = 'flag-modal-severity ' + (g.score >= 80 ? 'severity-P4' : g.score >= 60 ? 'severity-P3' : 'severity-P1');
+  document.getElementById('flag-modal-what').textContent =
+    "Start at 100 and subtract: 30 per active P1, 10 per P2, 2 per P3, 0.5 per P4 (P4 capped at −3); 1.5 per file over 1,500 lines (capped at −5); −6 with no test framework; −5 when the last scan is over 45 days old. Accepted and resolved flags don't count — accepting a risk is a decision, not a defect.";
+  const exampleEl = document.getElementById('flag-modal-example');
+  if (exampleEl) {
+    exampleEl.style.display = 'block';
+    exampleEl.textContent = g.parts.length ? "This app's deductions:\n" + g.parts.join("\n") : "No deductions — clean scan.";
+  }
+  const fixEl = document.getElementById('flag-modal-fix');
+  if (fixEl) {
+    fixEl.style.display = 'block';
+    fixEl.textContent = "Raise the grade by resolving flags (biggest deduction first), accepting risks that are genuinely fine (accepted flags don't deduct), splitting oversized files, adding a test framework, or rescanning if the data is stale.";
+  }
+  const exploitEl = document.getElementById('flag-modal-exploit');
+  if (exploitEl) exploitEl.style.display = 'none';
+  const confidenceEl = document.getElementById('flag-modal-confidence');
+  if (confidenceEl) confidenceEl.style.display = 'none';
+  document.getElementById('flag-modal-overlay').classList.add('active');
+}
+
+// ===== Strengths (v7.0) =====
+function strengthsHTML(strengths) {
+  if (!strengths) return '';
+  return `<div class="env-section"><div class="section-label">💪 Strengths — don't break these</div><div style="font-size:12px;color:var(--text-dim);line-height:1.5">${escHtml(strengths)}</div></div>`;
+}
+
 function renderCard(app, idx) {
   const isExpanded = expandedCard === idx;
   const dim = categoryIsDim(app.category) ? ' dim' : '';
@@ -2714,6 +2821,7 @@ function renderCard(app, idx) {
           ${priorityBadge(app)}
           ${coverageBadge(app)}
           ${claudeMdBadge(app)}
+          ${gradeBadge(app)}
           ${!app.scanned ? `<span style="color:#cca833;font-size:11px;font-family:var(--mono)">⏳</span>` : ''}
         </div>
         <div class="card-desc">${escHtml(app.description)}</div>
@@ -2730,6 +2838,7 @@ function renderCard(app, idx) {
       ${app.lastUpdated ? `<div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-bottom:12px">Last updated: ${app.lastUpdated}</div>` : ''}
       ${app.nextAction ? `<div class="next-action"><div class="section-label">Next Action</div><div class="next-action-text">${escHtml(app.nextAction)}</div></div>` : ''}
       <button class="pdf-export-btn" data-pdf-export="${window.APPS.indexOf(app)}" onclick="event.stopPropagation();exportAppPdf(this.dataset.pdfExport)">⤓ Export PDF</button>
+      ${strengthsHTML(app.strengths)}
       ${techHTML(app.tech || {})}
       ${envHTML(app.envSecrets)}
       ${metricsHTML(app.metrics)}
@@ -2791,6 +2900,7 @@ function exportAppPdf(idx) {
     <div class="pdf-meta">${meta.join('')}</div>
     ${app.nextAction ? `<div class="env-section"><div class="section-label">Next Action</div><div>${escHtml(app.nextAction)}</div></div>` : ''}`;
   _pdfReportEl.innerHTML = header
+    + strengthsHTML(app.strengths)
     + techHTML(app.tech || {})
     + envHTML(app.envSecrets)
     + metricsHTML(app.metrics)

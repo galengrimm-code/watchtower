@@ -24,7 +24,7 @@ window.APPS = [
     repoUrl: "https://github.com/your-org/example-active-app.git",
     lastUpdated: "2026-01-15",
     lastScanned: "2026-01-15",
-    scanVersion: "v6.7",
+    scanVersion: "v7.0",
     tech: {
       frontend: "React 18, Vite, Tailwind CSS",
       backend: "Next.js API routes",
@@ -34,6 +34,9 @@ window.APPS = [
       testing: "Playwright",
       hosting: "Vercel"
     },
+    // v7.0: one verified sentence on what the codebase does well — renders on the
+    // card and tells a future refactor what not to break. Written by each scan.
+    strengths: "RLS enforced on every queried table, Playwright specs cover auth + checkout, Zod validation on all API inputs.",
     envSecrets: ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "STRIPE_SECRET_KEY"],
     metrics: {
       totalLines: 12450,

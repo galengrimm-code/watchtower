@@ -5,9 +5,15 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v6.9
+# Security Scan Prompt v7.0
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.0 additions (2026-06-09) — error-handling and memory-growth sweeps, strengths line, health grade:**
+- STEP 1: swallowed-exception sweep — empty `catch {}` blocks and catch/except bodies that neither log, rethrow, nor surface the error. Silent failures hide both bugs and attacks; new category `swallowed-exception` (OWASP A09).
+- STEP 1: unbounded in-memory growth sweep — module-level Map/Set/array/object collections written to from request handlers with no eviction path (delete/clear/TTL/LRU/max-size). Complements `serverless-memory-state` (which covers cold-start resets); new category `unbounded-growth`.
+- STEP 2 JSON + STEP 3 CLAUDE.md: new required `strengths` output — one concrete, verified sentence on what this codebase does well (e.g. "Signature-verified webhooks, RLS on every table, Playwright coverage on auth + checkout"). Tells a future refactor what not to break. New `## Strengths` heading in the SCAN:AUTO block, enforced by STEP 4.
+- Dashboard (no scan work): health grade A–F per app, computed client-side from data the scan already emits — active flag severities, test posture, file-size hygiene, scan recency. Formula documented in the dashboard's grade modal.
 
 **v6.9 additions (2026-06-09) — Edge Function secrets, client-prefix misnaming, prompt bug fixes:**
 - STEP 1: Supabase Edge Function secret sweep — grep `supabase/functions/` for hardcoded keys/tokens/JWTs (uses existing `hardcoded-secrets` category; Edge Function source ships to version control and the deploy bundle)
@@ -180,6 +186,23 @@ Run these commands and include the results:
   - These prefixes ship the value to the client bundle by framework convention — the NAME itself is the leak, regardless of where the value lives. A correctly-named secret read server-side is fine; a `VITE_STRIPE_SECRET_KEY` is compromised the moment the bundle builds.
   - Flag as `env-exposure`. Severity critical if a value is assigned in a tracked file or the var is read in shipped client code; moderate if the name only appears in `.env.example`.
   - Fix: drop the public prefix, move the read to a server-only path (API route, server component, Edge Function), and rotate the value if a build ever shipped with it.
+
+- **Swallowed-exception sweep** (v7.0 addition):
+  - Empty catch blocks: `rg -n --multiline "catch\s*(\([^)]*\))?\s*\{\s*\}" --type=js --type=ts src app pages lib api components server 2>/dev/null`
+  - Python: `rg -n --multiline "except[^\n]*:\n\s*pass\b" --type=py 2>/dev/null`
+  - Then list all catch sites: `rg -n "catch\s*[\(\{]" --type=js --type=ts src app pages lib api 2>/dev/null` — for each hit, read the block body. If it contains NONE of `console.`, `logger`, `log(`, `throw`, `reject`, `captureException`, `Sentry`, `res.status`, `toast`, `setError`, `return` with an error value → treat as swallowed.
+  - Flag as `swallowed-exception`. Severity moderate by default; **critical→P2 when the swallowed catch wraps an auth, payment, webhook, or data-write path** — a failed Stripe signature check or Firestore write that vanishes silently is an attack's best friend and a data-loss generator.
+  - Text template: "catch block at {file:line} swallows errors silently — {what the surrounding code does}. Failures here {concrete consequence: e.g. 'mean an order can fail to persist with no log, no alert, and a 200 response'}."
+  - Fix: log with context at minimum (`console.error('{operation} failed', err)`), surface to the caller where the result matters, rethrow where the caller has better context. An intentional ignore needs a comment saying why.
+  - Do NOT flag: catch blocks that intentionally fall back with a comment, AbortError filtering, feature-detection try/catch around optional APIs.
+
+- **Unbounded in-memory growth sweep** (v7.0 addition):
+  - Module-level mutable collections: `rg -n "^(const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(new Map\(|new Set\(|\[\]|\{\})" --type=js --type=ts src app pages lib api server 2>/dev/null`
+  - For each hit, check whether it's WRITTEN to from a request/event handler (`.set(`, `.add(`, `.push(`, `[key] =`) and whether ANY eviction path exists: `.delete(`, `.clear(`, `.shift(`/`.splice(`, a TTL/expiry check, an LRU lib, or a max-size guard.
+  - Writes with no eviction → flag `unbounded-growth`. This is distinct from `serverless-memory-state` (state loss on cold start): on serverless, an unbounded collection still OOMs a warm instance under sustained traffic; on a long-running server (VPS, PM2, Railway) it's a slow memory leak that dies at 3am.
+  - Severity moderate; **P2 when the collection is keyed by unbounded user input (per-IP, per-session, per-request-ID) on a long-running server** — an attacker can grow it deliberately.
+  - Fix: bound it — `lru-cache` with `max`, a TTL sweep (`setInterval` purge), or move the state to Redis/Upstash/DB where it belongs.
+  - Do NOT flag: collections populated once at module load from static data, build-time-only scripts, test files.
 
 Also extract the deployed URL:
 - Check vercel.json for "alias" or "domains" fields
@@ -785,6 +808,7 @@ Output a JSON block in this exact format:
   "auth": "auth method (Google Auth, Firebase Auth, PIN, none, etc.)",
   "testing": "test frameworks and coverage (e.g. 'Playwright 1.58.2 (11 Chromium smoke tests)', 'Vitest + React Testing Library', 'Jest (47 unit tests)') or 'None'",
   "hosting": "deployment platform from config or vercel.json etc.",
+  "strengths": "ONE concrete, verified sentence on what this codebase does well — name specific mechanisms found during the scan (e.g. 'Signature-verified Stripe webhooks, RLS enforced on every queried table, Playwright specs cover auth + checkout'). Never generic praise; only what the scan actually confirmed. This tells a future refactor what NOT to break.",
   "envSecrets": ["list of env variable names needed, e.g. SUPABASE_URL, OPENAI_API_KEY"],
   "flags": [
     {
@@ -994,7 +1018,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Current focus:** {leave blank for user to fill}
 - **Next:** Review scan findings and address any P1/P2 flags.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v6.9. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.0. Do not edit this section manually. -->
 
 ## Tech Stack
 
@@ -1054,6 +1078,10 @@ Create a new CLAUDE.md and supporting doc structure:
 ## Deployed Surface
 {REQUIRED if a production URL was detected in STEP 1 or STEP 1B: list verified HTTP headers, CORS posture, /.well-known/security.txt presence, etc. If no URL was detected: "_Not deployed_".}
 
+## Strengths
+
+{REQUIRED: one sentence, copied from the STEP 2 `strengths` field — concrete, verified, names specific mechanisms. Never generic praise.}
+
 ## Metrics
 
 - **Total lines:** {N, excluding node_modules/.next/dist/build/package-lock.json}
@@ -1062,7 +1090,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
-- **Scan prompt version:** v6.9
+- **Scan prompt version:** v7.0
 
 <!-- SCAN:AUTO:END -->
 
@@ -1190,7 +1218,8 @@ After writing CLAUDE.md, read the file back and confirm the SCAN:AUTO block cont
 4. `## Security Notes` containing `### Active Flags`, `### Watch List (confidence < 0.8)`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
 5. `## Guardrails` containing `### Universal (apply to all projects)` with exactly 9 numbered items copied from GUARDRAILS RULES, and `### Project-Specific`
 6. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
-7. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
+7. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
+8. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
 
 If ANY required heading is missing, ANY subheading is omitted, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the entire SCAN:AUTO block from scratch — do not patch. Do not output success until the block is structurally complete.
 
@@ -1283,6 +1312,8 @@ P2 — High:
 P3 — Medium:
 - No rate limiting on public API routes → category: no-rate-limiting
 - In-memory rate limiters, caches, or session stores (Map, Set, module-level variables) on serverless platforms (Vercel, Netlify, AWS Lambda, Cloud Functions) that reset on every cold start → category: serverless-memory-state
+- catch/except blocks that neither log, rethrow, nor surface the error (empty catch, `except: pass`) → category: swallowed-exception (escalate to P2 when wrapping auth, payment, webhook, or data-write paths)
+- Module-level collections written from request handlers with no eviction path (delete/clear/TTL/LRU/max-size) → category: unbounded-growth (escalate to P2 when keyed by unbounded user input on a long-running server)
 - API routes with inconsistent auth/error handling patterns (some apply auth middleware, others skip it; some sanitize errors, others leak internals) → category: route-pattern-inconsistency
 - No input validation on API routes that accept user data (use Zod, Yup, or similar) → category: no-input-validation
 - Source maps (.map files) exposed or included in production build → category: source-maps-exposed
@@ -1457,6 +1488,8 @@ These are the valid category keys for flags. Every flag must use one of these:
 | prototype-pollution-merge | moderate | Deep merge (lodash.merge, deepmerge, Object.assign) blends `req.body` into target without blocking `__proto__`/`prototype`/`constructor` keys |
 | public-sensitive-endpoint | critical | Framework / config / source-control file accessible via deployed URL (`/.env`, `/.git/HEAD`, `/backup.sql`, `/actuator`, etc.) |
 | auth-endpoint-no-rate-limit | moderate | Auth route (login/signup/reset/otp) has no rate-limiting or captcha — credential-stuffing attacker can try unlimited combos |
+| swallowed-exception | moderate | catch/except block neither logs, rethrows, nor surfaces the error — failures vanish silently (P2 on auth/payment/webhook/data-write paths) |
+| unbounded-growth | moderate | Module-level Map/Set/array written from request handlers with no eviction — memory grows until the process dies (P2 when attacker-growable on a long-running server) |
 
 ---
 
@@ -1545,6 +1578,7 @@ Reference: https://owasp.org/Top10/ (© OWASP Foundation, CC BY-SA 4.0)
 | llm-output-dom-render | A03 |
 | missing-audit-log | A09 |
 | missing-period-lock | A09 |
+| swallowed-exception | A09 |
 | llm-spend-cap-unverified | — |
 | unauthenticated-cron | A01 |
 | unauthenticated-webhook | A01 |

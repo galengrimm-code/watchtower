@@ -20,8 +20,8 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 
 | Piece | What it does | Where it lives |
 |---|---|---|
-| Scan prompt | 1700+ lines of "what to check, what to flag," currently at v6.7 with OWASP Top 10 (2021) categorization | `prompts/security-scan-prompt.md` |
-| Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel | `index.html` (data populates over time from your scheduled scans) |
+| Scan prompt | 1900+ lines of "what to check, what to flag," currently at v7.0 with OWASP Top 10 (2021) categorization, per-app strengths, and silent-failure / memory-growth sweeps | `prompts/security-scan-prompt.md` |
+| Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel, and per-app A–F health grades | `index.html` (data populates over time from your scheduled scans) |
 | Helper scripts | Three small Python + Node scripts that parse CLAUDE.md scan blocks, merge results, and generate stats | `scans/` |
 | Scheduled-scan skill | The orchestrator that wires Phases 0 → A → B → B.5 → B.7 → C → D into a self-rescheduling loop on whatever cadence you configure (default: every 21 days) | `examples/triweekly-security-scan.SKILL.md.template` |
 | Config | One JSON file with your project list, portfolio root, and exclusions — everything else derives from this | `watchtower.config.example.json` |
@@ -35,7 +35,7 @@ Watchtower is three pieces: a **public methodology repo** (this one), a **privat
 ```mermaid
 graph TB
     subgraph public["PUBLIC: github.com/galengrimm-code/watchtower (this repo)"]
-        Prompt[Scan Prompt v6.7]
+        Prompt[Scan Prompt v7.0]
         Shell[Dashboard Shell - index.html]
         Scripts[Helper Scripts - Python + Node]
         Template[Skill Template - examples/]
@@ -143,16 +143,23 @@ On first run the dashboard is empty (no `data/apps.js` yet). It populates after 
 
 ## What the scan catches
 
-Roughly 65+ flag categories grouped by what they look at:
+Roughly 120+ flag categories grouped by what they look at:
 
 | Surface | Examples |
 |---|---|
-| Code (STEP 1) | Hardcoded secrets, git-history secret leaks, npm audit P1s, SSRF user-URL-fetch, webhook replay, path traversal, prototype pollution, source maps in prod, dangerous innerHTML, LLM output rendered to DOM |
+| Code (STEP 1) | Hardcoded secrets, git-history secret leaks, npm audit P1s, SSRF user-URL-fetch, webhook replay, path traversal, prototype pollution, source maps in prod, dangerous innerHTML, LLM output rendered to DOM, swallowed exceptions (silent catch blocks), unbounded in-memory growth |
 | DNS + deployed surface (STEP 1B) | Missing security headers (HSTS, CSP, X-Frame-Options, Referrer-Policy), CORS origin reflection + credentials, exposed sensitive endpoints (/.env, /.git/HEAD, /backup.sql), DMARC/SPF/DKIM/CAA gaps, unauthenticated cron/webhook endpoints |
 | AI tool supply chain (STEP 1C, runs once per cycle) | Vulnerable MCP servers, unsafe-list skills/plugins/hooks, memory-poisoning patterns, secrets in `.claude/`, outdated Claude Code, NVD cross-validation against the community threat-db |
-| Hygiene + tooling | Files over 500 lines (1500 for .jsx/.tsx), missing ESLint config, no `lint` script, missing .nvmrc, no security.txt, Prettier drift, CI not gating on lint |
+| Hygiene + tooling | Files over 1,500 lines (uniform threshold since v6.8), missing ESLint config, no `lint` script, missing .nvmrc, no security.txt, Prettier drift, CI not gating on lint |
 
 Severity follows P1 (active risk) → P4 (hygiene). Each project's `CLAUDE.md` gets a SCAN:AUTO block with the same shape — easy to diff across runs.
+
+### Health grades & strengths (v7.0)
+
+Two outputs aimed at "how is the portfolio doing," not just "what's broken":
+
+- **Health grade (A–F)** — each scanned app gets a letter badge on its dashboard card, computed client-side from data the scan already emits: active flag severities, files over the size threshold, test-framework presence, and scan recency. Accepted and resolved flags don't count — accepting a risk is a decision, not a defect. Click the badge for the full deduction breakdown. The formula lives in one function (`healthGradeFor` in `index.html`) — tune the weights to your own taste.
+- **Strengths line** — every scan writes one concrete, verified sentence on what the codebase does *well* ("Signature-verified Stripe webhooks, RLS on every queried table"). It renders on the card and tells a future refactor — human or AI — what not to break.
 
 ---
 
@@ -170,7 +177,7 @@ Each flag category that maps to an OWASP Top 10 (2021) item carries an optional 
 | A06 Vulnerable & Outdated Components | npm audit, EOL Node versions, unpinned GHA actions |
 | A07 Identification & Auth Failures | auth-endpoint rate limiting, tokens in localStorage |
 | A08 Software & Data Integrity | webhook replay, unpinned actions, prototype pollution, install scripts |
-| A09 Logging & Monitoring | missing audit log, debug logging in prod |
+| A09 Logging & Monitoring | missing audit log, debug logging in prod, swallowed exceptions |
 | A10 SSRF | dedicated SSRF user-URL-fetch grep + live probe |
 
 The mapping was inspired by the structured threat-modeling approach in gstack's `cso` skill; the implementation is original.
@@ -257,6 +264,7 @@ MIT — see [LICENSE](LICENSE). Use it however you want.
 
 - **v6.6 adversarial-review additions**: [OpenAI Codex](https://github.com/openai/codex)
 - **v6.7 OWASP framing**: inspired by [gstack](https://github.com/garrettmoon/gstack)'s `cso` skill (no code copied, implementation is original)
+- **v7.0 audit dimensions** (silent failures, memory growth, strengths, health grade): adapted from community "repo audit" prompt patterns
 - **AI tool threat database**: [FlorianBruniaux/claude-code-ultimate-guide](https://github.com/FlorianBruniaux/claude-code-ultimate-guide)
 - **CVE cross-validation**: [NIST National Vulnerability Database](https://nvd.nist.gov/)
 - **Claude Code**: [Anthropic](https://claude.com/claude-code)

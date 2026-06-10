@@ -7,24 +7,41 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
-## Unreleased
+## v7.0 — 2026-06-09
 
+Audit-dimension release: silent-failure and memory-growth sweeps, per-app strengths, A–F health grades. Adapted from community "repo audit" prompt patterns.
+
+### Added
+
+- **Swallowed-exception sweep (STEP 1)** — empty `catch {}` / `except: pass` blocks and catch bodies that neither log, rethrow, nor surface the error. New category `swallowed-exception` (P3; escalates to P2 on auth/payment/webhook/data-write paths). Maps to OWASP A09.
+- **Unbounded in-memory growth sweep (STEP 1)** — module-level Map/Set/array/object collections written from request handlers with no eviction path (delete/clear/TTL/LRU/max-size). New category `unbounded-growth` (P3; escalates to P2 when keyed by unbounded user input on a long-running server). Complements `serverless-memory-state`, which covers cold-start resets; this covers growth.
+- **Strengths line** — STEP 2 JSON gains a required `strengths` field and the SCAN:AUTO block gains a required `## Strengths` heading (enforced by STEP 4): one concrete, verified sentence on what the codebase does well. Renders on the dashboard card and in PDF export. Pipeline: `write_scan_jsons.py` parses it, `phase_c_update.py` merges it into `data/apps.js`.
+- **Health grade (A–F)** — dashboard-side only, zero scan cost. Each scanned app gets a letter badge computed from active flag severities (accepted/resolved excluded), files over the 1,500-line threshold, test-framework presence, and scan recency. Click the badge for the deduction breakdown; weights live in `healthGradeFor()` in `index.html`.
+
+### Changed
+
+- STEP 4 validation now requires 8 headings (added `## Strengths`); blocks missing it re-emit from scratch, same as any other structural gap.
 - Pipeline: `scans/write_scan_jsons.py` now parses each project's SCAN:AUTO `## Metrics`
   section into the scan JSON (`metrics` key: `totalLines`, `components`, `pages`,
   `apiRoutes`, `filesOver500`). `filesOver500` keeps its legacy key name but counts
   files over the v6.8 1,500-line threshold, converting pre-v6.8 lists to the current
-  semantics. `phase_c_update.py` merges scan metrics into existing entries while
-  preserving curated-only keys (`codeLines`, `dataLines`, `linesByType`) the
-  CLAUDE.md-derived scans never provide. Auto-created dashboard entries now show code
-  metrics ("Total code lines", "Files 1500+") from their first scan instead of
-  "Not scanned", and all entries' metrics refresh on every merge.
+  semantics (mixed legacy formats handled: backticked or plain filenames, annotated
+  size parens, count-only lines, v6.8 heading variants, pre-template inline blocks).
+  `phase_c_update.py` merges scan metrics into existing entries while preserving
+  curated-only keys (`codeLines`, `dataLines`, `duplicationAreas`, `linesByType`,
+  and `filesOver500` when the scan can't derive one). Auto-created dashboard entries
+  now show code metrics from their first scan instead of "Not scanned", and all
+  entries' metrics refresh on every merge.
 - Pipeline: `scans/write_scan_jsons.py` now parses each project's SCAN:AUTO `## Tech Stack`
   table and `Production URL` line into the scan JSON (top-level `frontend`/`backend`/
   `dataStorage`/`integrations`/`auth`/`testing`/`hosting` keys + `url`). `phase_c_update.py`
-  consumes them: tech refreshes on every merge, and `url` is filled on existing entries
-  only when currently `null` (a curated dashboard URL is never overwritten). Dashboard
-  entries auto-created for newly scanned projects now arrive with tech stack and live URL
-  instead of empty skeletons.
+  consumes them: tech refreshes on every merge (explicit "None" values are kept — they're
+  data, not empty cells), and `url` is filled on existing entries only when currently
+  `null` (a curated dashboard URL is never overwritten). Dashboard entries auto-created
+  for newly scanned projects now arrive with tech stack and live URL instead of empty
+  skeletons.
+- Dashboard: "Large File" labels updated from 500+ to 1500+ to match the v6.8 threshold
+  the tile and explainer already used.
 
 ## v6.9 — 2026-06-09
 
