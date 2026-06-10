@@ -72,7 +72,11 @@ def parse_tech(scan_section):
             continue
         key = TECH_LAYER_MAP.get(re.sub(r'[^a-z]', '', cells[0].lower()))
         value = re.sub(r'\*\*([^*]+)\*\*', r'\1', cells[1]).replace('\\|', '|').strip()
-        if key and value and value.strip('_-— ').lower() not in ("", "none", "n/a"):
+        # _None_ / *None* emphasis -> None. Explicit "None" is kept — it's data
+        # (e.g. Auth | None drives the dashboard's no-auth classification), not
+        # an empty cell. Only truly empty/dash cells are dropped.
+        value = value.strip('_*').strip()
+        if key and value.strip('-— '):
             tech[key] = value
     return tech
 
@@ -110,7 +114,9 @@ def parse_metrics(scan_section):
             metrics[key] = int(cm.group(1).replace(',', ''))
     fo = re.search(r'\*\*Files over [\d,]+ lines:\*\*\s*(.+)', section)
     if fo:
-        counts = [int(n.replace(',', '')) for n in re.findall(r'`[^`\n]+`\s*\((\d[\d,]*)\)', fo.group(1))]
+        # Filenames may or may not be backticked (older blocks use plain text),
+        # so count every "(N)" line-count on the line, not just backticked ones.
+        counts = [int(n.replace(',', '')) for n in re.findall(r'\((\d[\d,]*)\)', fo.group(1))]
         metrics["filesOver500"] = sum(1 for n in counts if n > 1500)
     return metrics
 

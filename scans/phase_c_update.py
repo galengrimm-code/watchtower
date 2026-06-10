@@ -609,14 +609,15 @@ def update_app(obj_text, scan, app_name):
         )
 
     # 7) metrics — replace with scan values, but carry over curated-only keys
-    #    (codeLines / dataLines / linesByType) the CLAUDE.md-derived scans never
-    #    provide, so a merge doesn't silently drop them from hand-curated entries.
+    #    (codeLines / dataLines / duplicationAreas / linesByType) the CLAUDE.md-derived
+    #    scans never provide, so a merge doesn't silently drop them from hand-curated
+    #    entries (index.html renders a Duplication tile from duplicationAreas).
     if scan.get("metrics"):
         merged = dict(scan["metrics"])
         loc = find_top_level_field(obj_text, "metrics")
         if loc:
             existing = obj_text[loc[1]:loc[2]]
-            for key in ("codeLines", "dataLines"):
+            for key in ("codeLines", "dataLines", "duplicationAreas"):
                 if key not in merged:
                     km = re.search(r'\b%s:\s*(\d+)' % key, existing)
                     if km:
