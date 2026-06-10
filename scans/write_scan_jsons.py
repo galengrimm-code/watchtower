@@ -144,6 +144,19 @@ def parse_metrics(scan_section):
     return metrics
 
 
+def parse_strengths(scan_section):
+    """Extract the one-sentence "## Strengths" line (v7.0). Returns None when the
+    section is absent (pre-v7.0 blocks) or holds only a placeholder."""
+    m = re.search(r'## Strengths\s*\n+(.+)', scan_section)
+    if not m:
+        return None
+    line = re.sub(r'^[-*]\s+', '', m.group(1).strip())
+    line = re.sub(r'\*\*([^*]+)\*\*', r'\1', line).strip('_ ')
+    if not line or line.startswith('{') or line.lower() in ('none', 'n/a'):
+        return None
+    return line
+
+
 def parse_flags(scan_section):
     af_m = re.search(r'### Active Flags\s*\|[^\n]+\n\|[-| ]+\n((?:\|.*\n)*)', scan_section)
     if not af_m:
@@ -204,6 +217,9 @@ def main():
         metrics = parse_metrics(scan_section)
         if metrics:
             out["metrics"] = metrics
+        strengths = parse_strengths(scan_section)
+        if strengths:
+            out["strengths"] = strengths
         for f in flags:
             out["flagCount"][f["severity"]] += 1
         filename = f"{slug}-{scan_date}.json"

@@ -635,6 +635,11 @@ def update_app(obj_text, scan, app_name):
     if scan.get("structure"):
         obj_text = replace_top_level_field(obj_text, "structure", js_structure(scan["structure"]))
 
+    # 8b) strengths (v7.0) — replace whenever the scan provides one; each scan's
+    #     strengths line reflects the codebase as of that scan.
+    if scan.get("strengths"):
+        obj_text = replace_top_level_field(obj_text, "strengths", jstr(scan["strengths"]))
+
     # 9) repoUrl (keep current — sometimes scan disagrees with dashboard intentionally).
     #    url: same rule, EXCEPT fill it when currently null — a curated URL is never
     #    overwritten, but auto-created skeleton entries get theirs from the scan.
@@ -682,6 +687,8 @@ def make_new_app_entry(scan, app_name, category, description, completion=None, n
         lines.append("    flags: [],")
     if scan.get("metrics"):
         lines.append(f"    metrics: {js_metrics(scan['metrics'])},")
+    if scan.get("strengths"):
+        lines.append(f"    strengths: {jstr(scan['strengths'])},")
     if scan.get("structure"):
         lines.append(f"    structure: {js_structure(scan['structure'])},")
     lines.append("  }")
