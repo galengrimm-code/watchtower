@@ -153,7 +153,11 @@ def check_project(root, today, extra_roots):
                 if not path_resolves(rel, root, file_index, extra_roots):
                     findings.append(f"{source_name} references `{rel}` which no longer exists")
 
-    # 3) SESSION-HANDOFF freshness vs commits
+    # 3) SESSION-HANDOFF freshness vs commits. Deterministic across clones:
+    #    use the file's last-COMMIT time, not filesystem mtime (a fresh clone
+    #    gives every file today's mtime). Exception: when the handoff has
+    #    uncommitted local modifications, mtime IS the truth — a just-updated,
+    #    not-yet-committed handoff is fresh, not stale.
     handoff = root / "SESSION-HANDOFF.md"
     if handoff.exists():
         try:
@@ -162,9 +166,19 @@ def check_project(root, today, extra_roots):
                 cwd=root, capture_output=True, text=True, timeout=10,
             )
             newest = int(r.stdout.strip() or 0)
-            handoff_ts = handoff.stat().st_mtime
+            rf = subprocess.run(
+                ["git", "log", "-1", "--format=%ct", "--", "SESSION-HANDOFF.md"],
+                cwd=root, capture_output=True, text=True, timeout=10,
+            )
+            handoff_ts = int(rf.stdout.strip() or 0)
+            dirty = subprocess.run(
+                ["git", "status", "--porcelain", "--", "SESSION-HANDOFF.md"],
+                cwd=root, capture_output=True, text=True, timeout=10,
+            )
+            if dirty.stdout.strip():
+                handoff_ts = max(handoff_ts, int(handoff.stat().st_mtime))
             behind_days = (newest - handoff_ts) / 86400
-            if newest and behind_days > HANDOFF_GRACE_DAYS:
+            if newest and handoff_ts and behind_days > HANDOFF_GRACE_DAYS:
                 findings.append(
                     f"SESSION-HANDOFF.md is {behind_days:.0f} days behind the latest commit — it claims to describe current state"
                 )
@@ -263,8 +277,26 @@ def main():
     flagged = len(results) - clean
     print(f"\n{flagged} project(s) with stale docs, {clean} clean.")
 
+    # firstFlagged carries forward across runs so generate-portfolio-stats.js can
+    # feed the "days open" badge (flagAges). Deliberately NOT emitted into the
+    # dated scans/*-DATE.json stream: the burndown chart tracks security-scan
+    # posture per scan date, and a different-cadence docs check would double-
+    # count projects per date and distort that trend.
+    first_flagged = {}
+    if OUT_JSON.exists():
+        try:
+            first_flagged = json.loads(OUT_JSON.read_text(encoding="utf-8")).get("firstFlagged", {})
+        except (json.JSONDecodeError, OSError):
+            pass
+    today_str = today.strftime("%Y-%m-%d")
+    for name, f in results.items():
+        if f and name not in first_flagged:
+            first_flagged[name] = today_str
+        elif not f:
+            first_flagged.pop(name, None)  # cleared — age resets if it ever returns
+
     OUT_JSON.write_text(json.dumps(
-        {"checkedAt": today.strftime("%Y-%m-%d"), "results": results}, indent=2,
+        {"checkedAt": today_str, "results": results, "firstFlagged": first_flagged}, indent=2,
     ), encoding="utf-8")
 
     if args.merge:

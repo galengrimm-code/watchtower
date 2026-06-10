@@ -138,6 +138,21 @@ function computeFlagAges() {
 }
 out.flagAges = computeFlagAges();
 
+// stale-docs flags come from check_docs_freshness.py (different cadence, not in
+// the dated scan stream by design — see that script). Feed their first-flagged
+// dates into flagAges so the "days open" badge works for them too.
+(function mergeDocsFreshnessAges() {
+  const df = path.join(SCANS_DIR, 'docs-freshness.json');
+  if (!fs.existsSync(df)) return;
+  try {
+    const firstFlagged = JSON.parse(fs.readFileSync(df, 'utf8')).firstFlagged || {};
+    for (const [appName, date] of Object.entries(firstFlagged)) {
+      const key = `${appName}|stale-docs`;
+      if (!out.flagAges[key]) out.flagAges[key] = date;
+    }
+  } catch { /* fail open */ }
+})();
+
 // --- Health-grade history (v7.0 trend arrows) ---
 // Score every app in data/apps.js with the shared grade model and record ONE
 // immutable {date, score} snapshot per app per SCAN (keyed to the app's
