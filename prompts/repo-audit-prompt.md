@@ -31,15 +31,19 @@ Over-recommending is a failure mode. A church sign-up sheet does not need Terraf
 
 ## PHASE 0: PROVE IT RUNS (facts, not opinions)
 
-Run each step. Record PASS / FAIL / N/A with real output (last ~10 lines on failure):
+**First, detect the toolchain and app root — do not assume npm at the repo root:**
+- Package manager from the lockfile: `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb`/`bun.lock` → bun, `package-lock.json` → npm. Use that manager's equivalents for every command below.
+- App root: if the root package.json declares `workspaces` (or `pnpm-workspace.yaml` exists), the runnable app likely lives under `apps/*` or `packages/*` — find it and run Phase 0 there. A monorepo whose root has no build script is not BROKEN.
 
-1. Install: `npm ci` (or `npm install` if there's no lockfile — and note the missing lockfile)
-2. Build: `npm run build` (or whatever the manifest declares)
-3. Lint: `npm run lint` if the script exists
-4. Tests: run whatever test runner package.json declares; record pass/fail COUNTS
+Then run each step. Record PASS / FAIL / N/A with real output (last ~10 lines on failure):
+
+1. Install: frozen-lockfile install (`npm ci` / `pnpm install --frozen-lockfile` / `yarn --immutable` / `bun install --frozen-lockfile`). If there's NO lockfile: install without writing one (`npm install --package-lock=false` or equivalent) and record the missing lockfile as a finding.
+2. Build: the manifest's build script
+3. Lint: the lint script if one exists
+4. Tests: whatever test runner the manifest declares; record pass/fail COUNTS
 5. Boot: start the dev server, fetch the homepage, capture any console errors, kill the server
 
-A failure here is severity BROKEN and outranks everything else in the report. A project that doesn't build has exactly one priority.
+A failure here is severity BROKEN and outranks everything else in the report — but a wrong-toolchain or wrong-directory failure is YOUR error, not the repo's: re-check detection before declaring BROKEN. A project that genuinely doesn't build has exactly one priority.
 
 ## PHASE 1: DISCOVERY (read before judging)
 
@@ -75,7 +79,7 @@ Check whichever apply; skip the rest silently:
 - **Supabase:** any table queried from the client without Row Level Security enabled. The anon key is public by design; RLS is the only wall.
 - **Firebase:** Firestore/Storage rules that allow open reads or writes (`allow read, write: if true`).
 - **Stripe:** webhook handlers that process the payload before verifying the signature (`stripe.webhooks.constructEvent`).
-- **Env vars:** `NEXT_PUBLIC_*` / `VITE_*` prefixed variables ship to the browser bundle by framework convention. Any such name containing SECRET, SERVICE, PRIVATE, ADMIN, or WEBHOOK is a leak regardless of intent.
+- **Env vars:** `NEXT_PUBLIC_*` / `VITE_*` prefixed variables ship to the browser bundle by framework convention. Flag the ones that are credential-shaped: names containing SECRET, SERVICE_ROLE, or PRIVATE, or ending in _KEY or _TOKEN — or any public-prefixed var whose VALUE is a credential rather than a URL or plain config. `NEXT_PUBLIC_ADMIN_URL` is fine; `VITE_STRIPE_SECRET_KEY` is compromised the moment the bundle builds.
 - **Secrets:** anything key-shaped hardcoded in source or visible in git history (`git log -p` spot-check on config files). If it was ever committed, it needs rotation — deleting it later doesn't unship history.
 - **Auth:** tokens in localStorage instead of httpOnly cookies; API routes that mutate data with no auth check.
 - **DOM:** `innerHTML` / `dangerouslySetInnerHTML` fed anything that isn't a hardcoded string — including LLM output, which is untrusted user data.
@@ -106,7 +110,7 @@ End the report with:
 
 ## CONSTRAINTS
 
-- Analysis only until "go". No code changes, no new dependencies.
+- Analysis only until "go": no source-code edits, no new dependencies, no committed files. Phase 0's install may populate node_modules (gitignored); it must not write a lockfile that wasn't already there. Note any working-tree change Phase 0 caused.
 - Never claim something builds, passes, or works unless you ran it in this session and saw the output.
 - Cite file:line for every fact. Say "couldn't verify" instead of guessing.
 - Don't pad the report. Short and true beats long and impressive.
