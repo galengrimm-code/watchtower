@@ -1436,6 +1436,13 @@ const FLAG_EXPLANATIONS = {
     fix: "Log with context at minimum (console.error('save failed', err)), surface the error to the caller where the result matters, rethrow where the caller has better context. If ignoring is genuinely intentional (feature detection, AbortError), say so in a comment.",
     example: "Silent data loss: try { await db.save(order) } catch (e) {} — order gone, user sees success\nFixed: catch (e) { console.error('order save failed', e); return res.status(500).json({ error: 'save failed' }) }"
   },
+  "stale-docs": {
+    title: "Stale Documentation",
+    severity: "P4 Maintenance",
+    what: "Hand-written docs in this project contradict reality: dev commands that no longer exist in package.json, references to files that were deleted or renamed, or a SESSION-HANDOFF.md that's days behind the commit history while claiming to describe current state. Stale docs actively mislead the next session — human or AI — that trusts them. Found by scans/check_docs_freshness.py, a deterministic script (code, not LLM judgment), so every quoted reference was actually checked against disk.",
+    fix: "Open the quoted references and fix each one: delete or update dead paths in TECH-DEBT/CLAUDE.md, correct renamed dev commands, rewrite the SESSION-HANDOFF. Then re-run: python scans/check_docs_freshness.py --merge — the flag clears itself when the docs match reality.",
+    example: "TECH-DEBT.md says 'refactor pages/api/hours.js' — but that file was consolidated into a new route two refactors ago. The debt item is noise until it points at the real file."
+  },
   "unbounded-growth": {
     title: "Unbounded In-Memory Growth",
     severity: "P3 Medium (P2 when attacker-growable on a long-running server)",

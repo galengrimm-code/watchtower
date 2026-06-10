@@ -81,6 +81,10 @@
 
 {REQUIRED: one sentence — what this codebase verifiably does well, naming specific mechanisms found during the scan (e.g. "Signature-verified Stripe webhooks, RLS enforced on every queried table, Playwright specs cover auth + checkout"). Never generic praise. Tells a future refactor what NOT to break.}
 
+## Dev Commands
+
+{REQUIRED: generated from package.json scripts each scan — fenced bash block listing each script (e.g. `npm run dev`, `npm run build`, `npm test`). Machine-written so it can never go stale; do not hand-maintain a duplicate elsewhere. If no package.json: "_No package.json — not an npm project._"}
+
 ## Metrics
 
 - **Total lines:** {N, excluding node_modules/.next/dist/build/package-lock.json}

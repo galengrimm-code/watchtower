@@ -185,6 +185,11 @@ After all scans + Codex pass complete:
    node -e "global.window={}; require('<watchtowerRoot>/data/ai-tool-intel.js'); console.log(!!window.AI_TOOL_INTEL)"
    ```
 
+5. Docs-freshness audit (v7.0) — deterministic script, one consolidated P4 `stale-docs` flag per project with findings (existing accepted/resolved stale-docs flags are preserved; projects that came clean get their active flag removed):
+   ```
+   python "<watchtowerRoot>/scans/check_docs_freshness.py" --merge
+   ```
+
 5. **Regenerate portfolio stats:**
    ```
    node "<watchtowerRoot>/scans/generate-portfolio-stats.js"

@@ -9,7 +9,10 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 
 Scan this project and give me a full security audit and code analysis.
 
-**v7.0 additions (2026-06-09) — error-handling and memory-growth sweeps, strengths line, health grade:**
+**v7.0 additions (2026-06-09/10) — error-handling and memory-growth sweeps, strengths line, health grade, docs freshness:**
+- Docs freshness: `scans/check_docs_freshness.py` (deterministic script, NOT an LLM check) validates hand-written doc claims per project — dev commands vs package.json scripts, backticked repo-relative path references vs disk (with abbreviated-path suffix matching, cross-root resolution, and intentional-nonexistence filtering), SESSION-HANDOFF freshness vs commits, `Last reviewed: YYYY-MM-DD` ages. Runs in Phase C of the scheduled flow with `--merge`; at most ONE consolidated P4 `stale-docs` flag per project. New category `stale-docs`.
+- STEP 3 CLAUDE.md: new machine-written `## Dev Commands` heading inside the SCAN:AUTO block, generated from package.json scripts each scan — derivable content can't go stale when a machine rewrites it. STEP 4 now validates 9 headings.
+- Client-prefix env grep narrowed: flags credential-shaped names (SECRET / SERVICE_ROLE / PRIVATE, or ending _KEY / _TOKEN) or credential-looking values — `NEXT_PUBLIC_ADMIN_URL` no longer false-positives.
 - STEP 1: swallowed-exception sweep — empty `catch {}` blocks and catch/except bodies that neither log, rethrow, nor surface the error. Silent failures hide both bugs and attacks; new category `swallowed-exception` (OWASP A09).
 - STEP 1: unbounded in-memory growth sweep — module-level Map/Set/array/object collections written to from request handlers with no eviction path (delete/clear/TTL/LRU/max-size). Complements `serverless-memory-state` (which covers cold-start resets); new category `unbounded-growth`.
 - STEP 2 JSON + STEP 3 CLAUDE.md: new required `strengths` output — one concrete, verified sentence on what this codebase does well (e.g. "Signature-verified webhooks, RLS on every table, Playwright coverage on auth + checkout"). Tells a future refactor what not to break. New `## Strengths` heading in the SCAN:AUTO block, enforced by STEP 4.
@@ -181,9 +184,9 @@ Run these commands and include the results:
   - Flag each as `hardcoded-secrets` severity critical. Text: "Edge Function {path} hardcodes a {key type} — move to `supabase secrets set NAME` and read via `Deno.env.get('NAME')`." Refer to the credential by variable name or key type only — never quote any value characters in the flag text.
   - Count service_role references inside `supabase/functions/` toward the excess-service-role-surface file count.
 
-- **Client-prefix env var misnaming** (v6.9 addition; Next.js and Vite projects):
-  - Run `grep -rn "NEXT_PUBLIC_[A-Z0-9_]*\(SECRET\|SERVICE\|PRIVATE\|ADMIN\|WEBHOOK\)\|VITE_[A-Z0-9_]*\(SECRET\|SERVICE\|PRIVATE\|ADMIN\|WEBHOOK\)" .env .env.* src app pages lib --exclude-dir=node_modules 2>/dev/null`
-  - These prefixes ship the value to the client bundle by framework convention — the NAME itself is the leak, regardless of where the value lives. A correctly-named secret read server-side is fine; a `VITE_STRIPE_SECRET_KEY` is compromised the moment the bundle builds.
+- **Client-prefix env var misnaming** (v6.9 addition, narrowed in v7.0; Next.js and Vite projects):
+  - Run `grep -rn "NEXT_PUBLIC_[A-Z0-9_]*\(SECRET\|SERVICE_ROLE\|PRIVATE\)\|VITE_[A-Z0-9_]*\(SECRET\|SERVICE_ROLE\|PRIVATE\)\|NEXT_PUBLIC_[A-Z0-9_]*_\(KEY\|TOKEN\)=\|VITE_[A-Z0-9_]*_\(KEY\|TOKEN\)=" .env .env.* src app pages lib --exclude-dir=node_modules 2>/dev/null`
+  - These prefixes ship the value to the client bundle by framework convention. Flag CREDENTIAL-SHAPED names only: containing SECRET / SERVICE_ROLE / PRIVATE, or ending in _KEY / _TOKEN — plus any public-prefixed var whose VALUE is a credential rather than a URL or plain config. `NEXT_PUBLIC_ADMIN_URL` is fine; `VITE_STRIPE_SECRET_KEY` is compromised the moment the bundle builds. (Exception: `_KEY` names that are documented client-safe by design — Supabase anon key, Firebase web API key, Stripe publishable key — are fine when RLS/rules are enforced; check that instead of flagging the name.)
   - Flag as `env-exposure`. Severity critical if a value is assigned in a tracked file or the var is read in shipped client code; moderate if the name only appears in `.env.example`.
   - Fix: drop the public prefix, move the read to a server-only path (API route, server component, Edge Function), and rotate the value if a build ever shipped with it.
 
@@ -1082,6 +1085,10 @@ Create a new CLAUDE.md and supporting doc structure:
 
 {REQUIRED: one sentence, copied from the STEP 2 `strengths` field — concrete, verified, names specific mechanisms. Never generic praise.}
 
+## Dev Commands
+
+{REQUIRED: generated from package.json scripts — list each script name with its command in a fenced bash block (e.g. `npm run dev`, `npm run build`, `npm test`). Machine-written every scan so it can never go stale. If the project has no package.json: "_No package.json — not an npm project._"}
+
 ## Metrics
 
 - **Total lines:** {N, excluding node_modules/.next/dist/build/package-lock.json}
@@ -1105,11 +1112,9 @@ Create a new CLAUDE.md and supporting doc structure:
 ## Testing
 {filled from scan if test infrastructure detected: framework, test count, how to run}
 
-## Dev Commands
-```bash
-npm run dev
-npm run build
-```
+<!-- NOTE (v7.0): Dev Commands now lives INSIDE the SCAN:AUTO block (machine-written
+     from package.json scripts every scan). Do not create a hand-written duplicate
+     here — one source of truth, and the machine's copy can't go stale. -->
 
 ## Deployment
 {filled from scan: hosting platform, deploy method, domain}
@@ -1219,7 +1224,8 @@ After writing CLAUDE.md, read the file back and confirm the SCAN:AUTO block cont
 5. `## Guardrails` containing `### Universal (apply to all projects)` with exactly 9 numbered items copied from GUARDRAILS RULES, and `### Project-Specific`
 6. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
 7. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
-8. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
+8. `## Dev Commands` — heading present, generated from package.json scripts (or the no-package.json placeholder) (v7.0 addition)
+9. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
 
 If ANY required heading is missing, ANY subheading is omitted, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the entire SCAN:AUTO block from scratch — do not patch. Do not output success until the block is structurally complete.
 
@@ -1490,6 +1496,7 @@ These are the valid category keys for flags. Every flag must use one of these:
 | auth-endpoint-no-rate-limit | moderate | Auth route (login/signup/reset/otp) has no rate-limiting or captcha — credential-stuffing attacker can try unlimited combos |
 | swallowed-exception | moderate | catch/except block neither logs, rethrows, nor surfaces the error — failures vanish silently (P2 on auth/payment/webhook/data-write paths) |
 | unbounded-growth | moderate | Module-level Map/Set/array written from request handlers with no eviction — memory grows until the process dies (P2 when attacker-growable on a long-running server) |
+| stale-docs | maintenance | Hand-written docs contradict reality: dead dev commands, references to deleted files, SESSION-HANDOFF behind the commit history. Emitted by scans/check_docs_freshness.py (deterministic script, one consolidated flag per project) — not by LLM judgment. |
 
 ---
 

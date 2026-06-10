@@ -151,6 +151,7 @@ Roughly 120+ flag categories grouped by what they look at:
 | DNS + deployed surface (STEP 1B) | Missing security headers (HSTS, CSP, X-Frame-Options, Referrer-Policy), CORS origin reflection + credentials, exposed sensitive endpoints (/.env, /.git/HEAD, /backup.sql), DMARC/SPF/DKIM/CAA gaps, unauthenticated cron/webhook endpoints |
 | AI tool supply chain (STEP 1C, runs once per cycle) | Vulnerable MCP servers, unsafe-list skills/plugins/hooks, memory-poisoning patterns, secrets in `.claude/`, outdated Claude Code, NVD cross-validation against the community threat-db |
 | Hygiene + tooling | Files over 1,500 lines (uniform threshold since v6.8), missing ESLint config, no `lint` script, missing .nvmrc, no security.txt, Prettier drift, CI not gating on lint |
+| Docs freshness (Phase C, deterministic script) | Dev commands that no longer exist in package.json, doc references to deleted files, SESSION-HANDOFF.md trailing the commit history, expired `Last reviewed:` dates — one consolidated `stale-docs` flag per project |
 
 Severity follows P1 (active risk) → P4 (hygiene). Each project's `CLAUDE.md` gets a SCAN:AUTO block with the same shape — easy to diff across runs.
 
