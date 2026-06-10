@@ -139,10 +139,14 @@ function computeFlagAges() {
 out.flagAges = computeFlagAges();
 
 // --- Health-grade history (v7.0 trend arrows) ---
-// Score every app in data/apps.js with the shared grade model and append one
-// {date, score} entry per app per generation date. Prior history is carried
-// forward from the existing portfolio-stats.js so trends survive regeneration.
-// The dashboard shows ▲/▼ once an app has two entries on different dates.
+// Score every app in data/apps.js with the shared grade model and record ONE
+// immutable {date, score} snapshot per app per SCAN (keyed to the app's
+// lastScanned date, not the generation date — this script also reruns for
+// CLAUDE.md/tooling refreshes, and the staleness penalty would otherwise make
+// arrows move because time passed rather than because a scan happened).
+// Prior history is carried forward from the existing portfolio-stats.js so
+// trends survive regeneration. The dashboard shows ▲/▼ once an app has two
+// snapshots.
 function computeGradeHistory() {
   const model = require('./grade-model.js');
   const appsPath = path.join(WATCHTOWER_ROOT, 'data', 'apps.js');
@@ -168,15 +172,16 @@ function computeGradeHistory() {
     }
   }
 
-  const today = out.generated;
   const MAX_ENTRIES = 12; // ~8 months of triweekly cycles
   for (const app of apps) {
     const r = model.scoreFor(app);
-    if (!r) continue;
+    if (!r || !app.lastScanned) continue;
     const entries = history[app.name] || [];
-    const last = entries[entries.length - 1];
-    if (last && last.date === today) last.score = r.score; // same-day rerun updates in place
-    else entries.push({ date: today, score: r.score });
+    // One snapshot per scan date; reruns between scans never touch history.
+    if (!entries.some(e => e.date === app.lastScanned)) {
+      entries.push({ date: app.lastScanned, score: r.score });
+      entries.sort((a, b) => a.date.localeCompare(b.date));
+    }
     history[app.name] = entries.slice(-MAX_ENTRIES);
   }
   return history;
