@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.0
+# Security Scan Prompt v7.1
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.1 additions (2026-06-12) — multi-file authorization & protocol checks (verified against two production codebases, cross-vendor: Claude Fable 5 + Opus 4.8 + OpenAI Codex):**
+- STEP 1: eleven semantic-logic checks for bug classes a single-file grep can't see, each hand-verified against real findings before inclusion. New categories: `unsigned-tenant-binding`, `oauth-state-not-verified`, `oauth-pkce-missing`, `static-admin-bearer`, `csv-formula-injection`, `token-in-logs`, `verbose-vendor-logging`, `external-redirect-fetch-unvalidated`, `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header`.
+- Five of these are **PROVISIONAL**: emit to the Watch List (confidence < 0.8) only, never Active Flags. `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header` (never calibrated against a verified corpus); plus `verbose-vendor-logging` and `external-redirect-fetch-unvalidated` (calibrated, but pure-prompt adjudication proved run-to-run flaky — external-redirect produced a false NEGATIVE via partner-trust rationalization across four hardening rounds). All five await the hybrid candidate-generation script layer. Marked inline.
+- `oauth-pkce-missing` is **advisory only (P4)** and fires solely on confirmed public clients (token exchange sends no client secret) — confidential clients never trip it. This is deliberately narrow: the class was false-positive-prone in testing until the secretless-exchange condition was added.
+- **Calibration record (v7.1, two production codebases, multi-round):** the six non-provisional checks (`unsigned-tenant-binding`, `oauth-state-not-verified`, `oauth-pkce-missing`, `static-admin-bearer`, `csv-formula-injection`, `token-in-logs`) reached stable, correct verdicts across repeated runs and across both repos ONLY after a **decision-policy** change, not prose hardening alone: the agent adjudicates a structural predicate (fire unless a LISTED exemption is provably cited; "seems safe"/"can't prove exploit" → Watch List, never silence) rather than free-forming "is this exploitable?". Pure-prompt judgment without that policy oscillated between false-negative-heavy (lenient) and false-positive-heavy (aggressive). The cross-file dataflow checks resisted even the policy flip — hence their provisional status and the planned script layer.
+- Methodology note: these checks target the gap a pattern-scanner structurally can't reach — verifying a control is not just *present* but *correct for the right user and the right data*. Multi-file authorization and OAuth-protocol dataflow are the highest-value blind spots. Confirmed semantic findings should graduate into deterministic checks here at each version bump.
 
 **v7.0 additions (2026-06-09/10) — error-handling and memory-growth sweeps, strengths line, health grade, docs freshness:**
 - Docs freshness: `scans/check_docs_freshness.py` (deterministic script, NOT an LLM check) validates hand-written doc claims per project — dev commands vs package.json scripts, backticked repo-relative path references vs disk (with abbreviated-path suffix matching, cross-root resolution, and intentional-nonexistence filtering), SESSION-HANDOFF freshness vs commits, `Last reviewed: YYYY-MM-DD` ages. Runs in Phase C of the scheduled flow with `--merge`; at most ONE consolidated P4 `stale-docs` flag per project. New category `stale-docs`.
@@ -206,6 +213,113 @@ Run these commands and include the results:
   - Severity moderate; **P2 when the collection is keyed by unbounded user input (per-IP, per-session, per-request-ID) on a long-running server** — an attacker can grow it deliberately.
   - Fix: bound it — `lru-cache` with `max`, a TTL sweep (`setInterval` purge), or move the state to Redis/Upstash/DB where it belongs.
   - Do NOT flag: collections populated once at module load from static data, build-time-only scripts, test files.
+
+**v7.1 additions — multi-file authorization & protocol checks (semantic, not pure-grep):**
+
+> These eleven checks each START with a grep to find candidate sites, but the flag decision requires READING the surrounding code and reasoning about dataflow across files — the grep only narrows where to look. A bare pattern match is never sufficient to flag. Each verdict must cite `{file:line}`. These were derived from a cross-vendor review (Claude + OpenAI Codex) and hand-verified against two real codebases before inclusion; the false-positive guards below are not optional — they are the reason these checks are trustworthy.
+
+> **READ THIS BEFORE JUDGING — calibration found these checks were systematically defeated by an agent rationalizing real findings down to "safe."** Two failure modes, both forbidden here:
+> 1. **Do not anchor on the project's own security self-description.** Ignore CLAUDE.md "Strengths" lines, prior-scan "strong posture" notes, and reassuring code comments when deciding fire/no-fire. Judge the CODE in front of you. Every miss in calibration happened in a codebase that asserts strong security — the assertion is not evidence of safety.
+> 2. **Each check below names the EXACT misconception that produces a false negative (marked "⚠ RATIONALIZATION TRAP"). If your reason for NOT firing matches the trap, you are wrong — fire it.** "It's quote-wrapped," "the compare is timing-safe," "the partner API is trusted," "there's a CSRF cookie" are not exemptions. Only the listed structural guards exempt a finding. When the code matches the FLAG condition and your only counter-argument is a trap, FIRE and let the verify pass sort it out — a false positive is cheap; a missed cross-tenant write in the commercial app is not.
+>
+> **DECISION POLICY (this overrides your default judgment — apply it to every check below).** You are NOT deciding "is this exploitable?" or "does this seem safe?" — that framing is what fails. You are adjudicating a structural predicate. Once a check's FLAG condition is met by code you have read, the finding **fires unless you can cite specific lines that prove one of THAT check's listed exemptions.** Exactly three verdicts are permitted:
+> - **CONFIRM (→ Active Flag):** flag condition met; no listed exemption proven in the code.
+> - **CLEAR:** you cite the exact line(s) proving a listed exemption. A clear REQUIRES a citation — "probably handled by middleware/a library/the framework" without reading and citing that code is NOT a clear.
+> - **WATCH-LIST (confidence < 0.8):** the structural shape is present but you could not fully trace the dataflow across files. "I couldn't prove the exploit," "I'm not sure," and "couldn't find the whole chain" all map HERE — never to silence.
+>
+> Two hard rules inside that policy: (a) **Absence of a guard is not presence of a guard.** If you cannot find the session-binding comparison, the host allowlist, or the neutralization in the code you read, it is NOT there — do not assume it exists elsewhere; fire or watch-list. (b) **A guard only counts if it is the LISTED exemption for that specific check.** A real-looking control that is not on the check's exemption list (a CSRF cookie for `unsigned-tenant-binding`, "first-party domain" for `external-redirect`, a role gate for `token-in-logs`) does NOT clear the finding, no matter how reassuring it looks.
+
+- **Unsigned tenant binding** (`unsigned-tenant-binding`, critical, A01):
+  - The sink that matters: a tenant/org/owner/role identifier that decides WHO a privileged or cross-tenant write applies to, sourced from client-controllable data that is NOT cryptographically bound to the authenticated session.
+  - Find candidates: `rg -n "Buffer\.from\([^)]*base64|atob\(|JSON\.parse\(.*(state|token|payload)|jwt\.decode\(|state\s*=|\.org_id|orgId|tenant_id|tenantId" --type=js --type=ts api app pages lib supabase 2>/dev/null`
+  - For each: trace where the identifier comes from. FLAG when an org/tenant/owner id is decoded from an **unsigned** source (base64 blob, OAuth `state` payload, a JWT whose signature is never verified, a cookie value) AND is then used to target a DB write/upsert/update — especially via a service-role/RLS-bypassing client.
+  - Guard (do NOT flag): the id is read from `auth.session`/`auth.profile`/verified-JWT claims; OR the decoded id is checked equal to the session-derived id before the write (`if (statePayload.org_id !== auth.profile.org_id) reject`). A signed+verified state (HMAC) also passes.
+  - ⚠ RATIONALIZATION TRAP: a CSRF-token-vs-cookie match (e.g. `savedCsrf === statePayload.csrf`) and "a valid session exists" do **NOT** satisfy the guard. The CSRF match only proves the same browser made both legs of the flow; "a session exists" only proves the caller is *some* logged-in user. Neither proves the decoded `org_id` belongs to *this* user. The guard is satisfied ONLY by comparing the tenant id itself against the session-derived tenant id (`statePayload.org_id === auth.profile.org_id`). If that exact comparison is absent, FIRE — even when a CSRF cookie and a session check are both present.
+  - Text: "Write at {file:line} targets org/tenant `{var}` decoded from {unsigned source} with no binding to the authenticated session — any authenticated user can forge it to write into another tenant's rows. (A CSRF cookie / session-exists check is present but does not bind the tenant id to the user.)"
+  - Fix: derive the tenant id from the session, or require the decoded id to equal the session id before the write. If a round-trip value must carry the id, sign it (HMAC) and verify on return.
+
+- **OAuth state not verified** (`oauth-state-not-verified`, critical, A07):
+  - Find OAuth callbacks: `rg -n "searchParams\.get\(['\"]code|req\.query\.code|exchangeCodeForSession|callback|oauth" -g '*.{js,jsx,ts,tsx}' api app pages 2>/dev/null`
+  - For each callback that reads an authorization `code` and exchanges it: trace the FULL round trip. At authorize time, is a `state` value generated and stored (cookie, session, `sessionStorage`)? At callback time, is the returned `state` read AND compared against that stored value BEFORE the code is exchanged?
+  - FLAG when the callback consumes `code` but never reads/compares `state` (CSRF on the OAuth flow).
+  - LISTED EXEMPTIONS (any one clears it): (1) the flow is delegated wholly to a library that handles state internally — `supabase.auth.exchangeCodeForSession`, NextAuth/Auth.js, `passport`, `openid-client`, `@octokit/oauth-app` — and the app does not hand-roll the token POST; (2) state is compared via an indirect helper (`verifyState(req)`) — read the helper and cite it; (3) **a CSRF/nonce value embedded in the `state` is read back on callback and compared against a browser-bound value (an HttpOnly cookie set at authorize time, or a server/session-stored value)** — e.g. `state` carries `{ csrf }`, a `jd_oauth_state` HttpOnly cookie holds the same token, and the callback rejects on `cookie.csrf !== statePayload.csrf`. That IS valid OAuth-state CSRF protection — CLEAR it; do not insist on RFC-canonical "store the whole state server-side" shape.
+  - Scope note (prevents a cross-check mistake): exemption (3) clears **only** `oauth-state-not-verified`. It does NOT clear `unsigned-tenant-binding` — a CSRF-nonce match proves the same browser made both legs; it says nothing about whether a tenant/org id ALSO carried in that same state belongs to the authenticated user. The two checks can reach opposite verdicts on the very same callback, and that is correct.
+  - Text: "OAuth callback at {file:line} exchanges `code` without verifying `state` (no library delegation, no nonce-vs-stored-value comparison) — vulnerable to login-CSRF / code-injection."
+  - Fix: read the returned `state`, compare to the value stored at authorize time, reject on mismatch, clear it after use.
+
+- **OAuth PKCE missing — PUBLIC clients only** (`oauth-pkce-missing`, **P4 advisory**, A07):
+  - For each hand-rolled OAuth authorize-URL builder + token exchange: does the authorize URL include `code_challenge`, and does the token POST send a `client_secret`?
+  - FLAG (advisory) ONLY when there is NO `code_challenge` AND the token exchange sends **no client secret** (a true public client — SPA/mobile/native that cannot hold a secret). 
+  - Guard (do NOT flag — this is the common case): the token exchange sends a `client_secret` / HTTP Basic client auth. Confidential server-side clients do not require PKCE; flagging them is noise. This guard is why the check is reliable — without it the class false-positives constantly.
+  - Text (advisory): "Public OAuth client at {file:line} performs the code flow without PKCE (`code_challenge`) — add PKCE for defense against code interception."
+  - Fix: generate a `code_verifier`/`code_challenge` pair, send the challenge on authorize and the verifier on exchange.
+
+- **Static admin bearer** (`static-admin-bearer`, critical when it is the sole gate on privileged ops, A01):
+  - Find: `rg -n "ADMIN_PASSWORD|ADMIN_SECRET|ADMIN_TOKEN|ADMIN_KEY|CRON_SECRET|x-admin|requireAdmin|process\.env\.[A-Z_]*(PASSWORD|SECRET|TOKEN)" --type=js --type=ts api app pages lib middleware* 2>/dev/null`
+  - For each privileged/admin/cron route: is the ONLY authentication a comparison of a request header/param against a static env var (no user-bound session, no role claim)?
+  - FLAG critical when a static-env compare is the sole gate on privileged operations (cross-tenant reads/writes, admin actions, cron jobs that mutate data). Sub-check: note whether the comparison is timing-unsafe (`===`, `Array.includes(token)`, `==`) rather than `crypto.timingSafeEqual` — call it out in the flag text.
+  - Guard (do NOT flag): the static secret is defense-in-depth ON TOP of a real session/role check; OR it gates a genuinely non-sensitive endpoint (single-tenant, no data exposure, no state mutation — e.g. a health ping).
+  - ⚠ RATIONALIZATION TRAP: "the compare uses `crypto.timingSafeEqual`, so it's fine" and "admin endpoints are an appropriate use case, so non-sensitive" are BOTH wrong. A timing-safe compare that is the *sole* gate still FIRES — the flaw is the shared static secret, not the comparison. And any route that reads or writes more than one tenant's data is NEVER "non-sensitive": cross-org reads (every customer's records/feedback/error-logs at one endpoint), admin consoles, and data-mutating crons all FIRE when a static env bearer is the only gate, regardless of timing-safety. Only a genuinely single-tenant, side-effect-free endpoint is exempt.
+  - Text: "Privileged route {file:line} is gated only by a static `{ENV_VAR}` bearer{, compared with a timing-unsafe `===`}. A single shared secret protects {what it gates}; if it leaks, all of it is exposed. No per-user admin identity or audit trail."
+  - Fix: move to per-admin identity (OIDC/JWT with a role claim) or per-admin DB-stored API keys with audit logging; rotate the shared secret; use `crypto.timingSafeEqual` for any remaining secret compare.
+
+- **CSV/spreadsheet formula injection** (`csv-formula-injection`, moderate, A03):
+  - Find export builders: `rg -n "text/csv|\.csv|toCsv|exportCsv|papaparse|new Blob\(|xlsx|exceljs|join\(','\)|\.join\(\\\"," -g '*.{js,jsx,ts,tsx}' 2>/dev/null`
+  - For each cell-construction path: do user-entered free-text fields (names, descriptions, notes, vendor, brand) flow into cells WITHOUT neutralizing a leading `=`, `+`, `-`, `@`, tab, or CR?
+  - ⚠ RATIONALIZATION TRAP: cells wrapped in double quotes (`"${cell}"`) are NOT safe. Quoting and `""`-escaping stop a value from breaking the CSV into extra columns; they do NOTHING to stop Excel/Sheets from evaluating a leading `=`/`+`/`-`/`@` as a formula. If you are about to write "NO-FIRE because the cells are quoted," STOP — that is the trap. The ONLY valid neutralization is prefixing a leading-formula value with `'` or stripping/escaping the formula char itself. A literal cell like `=== USAGE SUMMARY ===` inside quotes is still live. When user free-text reaches a cell and the only defense is quoting, FIRE.
+  - FLAG when user free-text reaches cells unneutralized (quoting does not count as neutralization).
+  - Guard (do NOT flag): only numeric/enum/system-generated values are exported; OR cells are prefixed with `'` / the leading formula char is stripped/escaped.
+  - Note escalation: org-scoped exports are same-tenant (moderate); if the app ever emails/shares an export across orgs, the same flaw is higher severity — mention it in the flag text.
+  - Text: "CSV export at {file:line} writes user free-text (`{field}`) into cells without neutralizing leading `= + - @` — a crafted value like `=HYPERLINK(...)` executes when the file opens in Excel/Sheets."
+  - Fix: prefix any cell whose value starts with `= + - @ \t \r` with a single quote: `const neutralize = v => /^[=+\-@\t\r]/.test(String(v)) ? "'" + v : v`.
+
+- **Token / secret value in logs or responses** (`token-in-logs`, critical, A09):
+  - Find: `rg -n "console\.(log|error|warn|info)\(|res\.(json|send)\(|return Response\.json\(|NextResponse\.json\(" --type=js --type=ts api app pages lib supabase server 2>/dev/null`
+  - FLAG critical when an actual secret VALUE reaches a log OR an HTTP response: an `access_token`/`refresh_token`/`client_secret`/`api_key` variable, an `Authorization` header value, or a full token-bearing response/request object (`console.error('...', tokens)`, `console.log(req.headers)`). This includes any endpoint that RETURNS raw token values in its response body — a "debug token" route that responds with `{ access_token: ..., refresh_token: ... }` is a fire even if it is role-gated, because the values then live in browser history, proxy logs, and network captures.
+  - Distinguish from `verbose-vendor-logging`: a *token variable or token-bearing object* → `token-in-logs` (critical). An *unbounded third-party error/response BODY string* with no token → `verbose-vendor-logging` (moderate). When a body might contain a token, flag the more severe `token-in-logs`.
+  - Guard (do NOT flag): logs of error messages, status codes, ids, or explicitly redacted values.
+  - ⚠ RATIONALIZATION TRAP: "it's only logged on an error path, the body probably has no token" and "the debug endpoint is owner-gated, so it's fine" are NOT exemptions. Returning or logging raw tokens fires regardless of how the path is reached.
+  - Text: "{file:line} logs {what} — token/secret values persist in function/platform logs (Vercel, CloudWatch) readable by anyone with log access."
+  - Fix: never log secret values; log a boolean/length/last-4 at most. Remove debug endpoints that return raw tokens.
+
+- **Verbose third-party body logging** (`verbose-vendor-logging`, moderate, A09) — **PROVISIONAL (Watch List only)**:
+  - Calibration note: this check wobbles run-to-run (CLEAR ↔ WATCH-LIST) because "is this bounded enough?" is a judgment call — emit to the **Watch List (confidence < 0.8)** only, never an Active Flag, until the hybrid candidate-generation script lands (see v7.1 calibration findings). It is a moderate logging-hygiene issue; surfacing for review is sufficient.
+  - Distinct from `token-in-logs`: an unbounded `await response.text()` / response body / XML snippet from a third-party API logged wholesale — may contain PII, serials, signed URLs, or diagnostic data even when no auth token is present.
+  - FLAG when an external API error/response body is logged without length bounding or redaction.
+  - Guard (do NOT flag): the body is sliced to a small bound (`.slice(0, 200)`) or only a status/summary is logged.
+  - Text: "{file:line} logs an unbounded third-party response body (`{var}`) — customer data / signed URLs may leak into logs."
+  - Fix: slice to a short bound before logging; redact known-sensitive fields.
+
+- **External redirect / link followed with credentials** (`external-redirect-fetch-unvalidated`, moderate, A10) — **PROVISIONAL (Watch List only)**:
+  - Calibration note: across four rounds of prompt hardening this check still produced a false NEGATIVE — an agent cleared a real token-bearing HATEOAS follow by reasoning "trusted first-party / documented accepted design," the exact rationalization the guard forbids. Determining "is there an allowlist anywhere across these files / is the token actually attached by the shared client" is a cross-file dataflow question pure-prompt adjudication fudges. Until the hybrid candidate-generation script lands (the script finds the response-derived URL + the auth header + greps for any in-code allowlist, then the LLM only adjudicates the candidate), emit to the **Watch List (confidence < 0.8)** only — never an Active Flag, and never CLEAR on partner-trust. Surfacing every credentialed response-derived fetch for human review is the safe failure mode.
+  - HATEOAS / pagination / redirect-following pattern: server-side `fetch`/`axios` to a URL taken from an EXTERNAL API response (a `Location` header, a `links[].uri`/`href`/`@nextLink` field, a `nextPage` URL) where the follow-up request carries an `Authorization`/bearer header and there is NO host allowlist check before the call.
+  - Find: `rg -n "headers\.get\(['\"]location|\.links|nextLink|nextPage|rel.*next|href|\.uri\b" --type=js --type=ts api app pages lib supabase 2>/dev/null` then cross-reference with `fetch(`/`axios` calls that attach an auth header.
+  - FLAG when a response-derived URL is fetched WITH a credential attached and no destination-host validation. The credential may be attached inline OR by a shared pre-authed client instance — check the client, not just the call site.
+  - Guard (do NOT flag) — ONLY these two: (a) the follow-up request carries NO auth token (e.g. fetching a presigned S3 URL from a 307 `Location` with a bare `fetch`); OR (b) the destination host is validated against an in-code allowlist before the call.
+  - ⚠ RATIONALIZATION TRAP: "the URL comes from a trusted first-party / partner API, so it's safe" is NOT an exemption — it is the mitigation argument, and it is exactly the thing this check exists to flag. The threat model IS a compromised, misconfigured, or MITM'd partner response returning an unexpected host while your code attaches the bearer token. "Trusted vendor" never exempts; only "no token attached" or "explicit host allowlist in the code" do. If a response-derived URL is fetched with a credential and there is no allowlist check in the source, FIRE (note "mitigated by partner trust" in the text if you like, but still fire).
+  - Text: "{file:line} follows a URL from {external API}'s response with the bearer token attached and no host allowlist — if that API is compromised or returns an unexpected host, the token is sent to it (SSRF / token exfiltration)."
+  - Fix: validate the URL's host against a known allowlist of the partner's domains before any credentialed follow-up; strip the auth header on cross-host follows.
+
+- **RLS write-side coverage** (`rls-write-side-coverage`, moderate, A01) — **PROVISIONAL (Watch List only)**:
+  - This check is NOT yet calibrated against a verified corpus — emit to the **Watch List (confidence < 0.8)**, never Active Flags, until a full cycle proves the FP rate.
+  - Grep `supabase/migrations/` for `CREATE POLICY` statements. For each table, classify policies by command: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `ALL`.
+  - Candidate concern: a table that is written from client-reachable code paths (an API route uses the RLS-enforced client, not service-role, for an insert/update) but has only SELECT policies (or none) for the write commands — meaning writes rely entirely on default-deny or are silently failing.
+  - Guard (do NOT flag, hence provisional): tables intentionally append-only or read-only; tables written ONLY via service-role/RPC (RLS doesn't apply); tables where default-deny is the intended posture and no write path exists. This requires table USAGE context, not migration text alone — do not flag from migrations in isolation.
+  - Text (Watch List): "Table `{table}` has SELECT policies but no INSERT/UPDATE/DELETE policy while {write path} writes via the RLS-enforced client — verify writes are intended and not relying on accidental default-deny."
+
+- **Mass assignment** (`mass-assignment`, moderate, A01/A04) — **PROVISIONAL (Watch List only)**:
+  - Not yet calibrated — emit to the **Watch List (confidence < 0.8)** only.
+  - Find: `rg -n "\.(insert|update|upsert|create)\(\s*(req\.body|\{\s*\.\.\.req\.body|body\)|\{\s*\.\.\.body)|Object\.assign\([^,]*,\s*req\.body|\.\.\.(req\.body|body)\b" --type=js --type=ts api app pages 2>/dev/null`
+  - FLAG when `req.body` (or a wholesale spread/`Object.assign` of it) flows into a DB write without an explicit field allowlist — caller can set columns the handler never intended (`role`, `org_id`, `is_admin`, `plan`).
+  - Guard (do NOT flag): the body is validated by a schema that STRIPS unknown keys (Zod `.strict()`/`.parse`, Yup, an ORM-level column allowlist) and the result — not raw body — is written; OR fields are explicitly destructured and mapped.
+  - Text (Watch List): "{file:line} writes `req.body` wholesale into {table} with no field allowlist — a caller can set unintended columns (privilege/tenant escalation)."
+
+- **Trusted client header** (`trusted-client-header`, critical, A01) — **PROVISIONAL (Watch List only)**:
+  - Not yet calibrated — emit to the **Watch List (confidence < 0.8)** only.
+  - Find: `rg -n "req\.headers\[['\"]x-|headers\.get\(['\"]x-|x-org|x-user|x-tenant|x-role|x-admin" --type=js --type=ts api app pages lib middleware* 2>/dev/null`
+  - FLAG when an authorization or tenant-scoping decision reads a client-supplied custom header (`x-org-id`, `x-user-id`, `x-role`) instead of the authenticated session.
+  - Guard (do NOT flag): headers injected/verified by trusted infrastructure (a gateway/proxy that strips-then-sets them, a verified signed header); standard headers used for non-authz purposes (content negotiation, request IDs for tracing).
+  - Text (Watch List): "{file:line} makes an authz/tenant decision from client header `{header}` — trivially forgeable; scope from the session instead."
 
 Also extract the deployed URL:
 - Check vercel.json for "alias" or "domains" fields
@@ -1021,7 +1135,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Current focus:** {leave blank for user to fill}
 - **Next:** Review scan findings and address any P1/P2 flags.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.0. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.1. Do not edit this section manually. -->
 
 ## Tech Stack
 
@@ -1097,7 +1211,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
-- **Scan prompt version:** v7.0
+- **Scan prompt version:** v7.1
 
 <!-- SCAN:AUTO:END -->
 
@@ -1497,6 +1611,17 @@ These are the valid category keys for flags. Every flag must use one of these:
 | swallowed-exception | moderate | catch/except block neither logs, rethrows, nor surfaces the error — failures vanish silently (P2 on auth/payment/webhook/data-write paths) |
 | unbounded-growth | moderate | Module-level Map/Set/array written from request handlers with no eviction — memory grows until the process dies (P2 when attacker-growable on a long-running server) |
 | stale-docs | maintenance | Hand-written docs contradict reality: dead dev commands, references to deleted files, SESSION-HANDOFF behind the commit history. Emitted by scans/check_docs_freshness.py (deterministic script, one consolidated flag per project) — not by LLM judgment. |
+| unsigned-tenant-binding | critical | Org/tenant/owner id decoded from an unsigned client source (base64 blob, OAuth state, unverified JWT, cookie) and used to target a DB write — forgeable cross-tenant write. (v7.1) |
+| oauth-state-not-verified | critical | OAuth callback exchanges `code` without verifying `state` against a stored value — login-CSRF / code injection. Library-delegated flows (supabase-js, NextAuth, passport) exempt. (v7.1) |
+| oauth-pkce-missing | P4 | Advisory: confirmed public OAuth client (secretless token exchange) performs the code flow without PKCE. Confidential clients never flagged. (v7.1) |
+| static-admin-bearer | critical | Privileged/admin/cron route gated solely by a static env-var bearer (no per-user identity); notes timing-unsafe comparison. Critical when it gates cross-tenant or mutating ops. (v7.1) |
+| csv-formula-injection | moderate | CSV/XLSX export writes user free-text into cells without neutralizing leading `= + - @` — formula executes in Excel/Sheets. Escalates if exports cross org boundaries. (v7.1) |
+| token-in-logs | critical | Log call receives an actual token/secret value or token-bearing object — secrets persist in function/platform logs. (v7.1) |
+| verbose-vendor-logging | moderate | PROVISIONAL (Watch List only): unbounded third-party response body logged wholesale — PII/serials/signed URLs may leak even without a token present. Wobbles run-to-run; pending hybrid script. (v7.1) |
+| external-redirect-fetch-unvalidated | moderate | PROVISIONAL (Watch List only): server follows a URL from an external API response (Location/links/nextPage) with an auth header attached and no host allowlist — SSRF / token exfiltration. Pure-prompt produced false negatives via partner-trust; pending hybrid script. (v7.1) |
+| rls-write-side-coverage | moderate | PROVISIONAL (Watch List only): table has SELECT policies but no INSERT/UPDATE/DELETE policy while written via the RLS-enforced client. Needs usage context. (v7.1) |
+| mass-assignment | moderate | PROVISIONAL (Watch List only): `req.body` written wholesale into a DB write with no field allowlist — caller can set unintended columns. (v7.1) |
+| trusted-client-header | critical | PROVISIONAL (Watch List only): authz/tenant decision read from a client-supplied custom header instead of the session — trivially forgeable. (v7.1) |
 
 ---
 
@@ -1605,6 +1730,17 @@ Reference: https://owasp.org/Top10/ (© OWASP Foundation, CC BY-SA 4.0)
 | ai-mcp-cve-nvd-only | — |
 | ai-mcp-cve-disagreement | — |
 | ai-memory-file-drift | — |
+| unsigned-tenant-binding | A01 |
+| oauth-state-not-verified | A07 |
+| oauth-pkce-missing | A07 |
+| static-admin-bearer | A01 |
+| csv-formula-injection | A03 |
+| token-in-logs | A09 |
+| verbose-vendor-logging | A09 |
+| external-redirect-fetch-unvalidated | A10 |
+| rls-write-side-coverage | A01 |
+| mass-assignment | A01 |
+| trusted-client-header | A01 |
 
 ### Notes on the mapping
 - **Dual mappings**: a few categories arguably touch two OWASP categories (e.g., `no-rate-limiting` is both A04 Insecure Design and an enabler of A07 auth attacks). The table picks the primary category; secondary mappings can be added in a future revision if users care.

@@ -7,6 +7,24 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-06-12 — v7.1 (multi-file authorization & protocol checks)
+
+Eleven STEP 1 semantic-logic checks for the bug class a pattern-scanner structurally can't reach: verifying a control is not just *present* but *correct for the right user and the right data*. Cross-vendor reviewed (Claude Fable 5 + Opus 4.8 + OpenAI Codex) and hand-verified against two production codebases before inclusion.
+
+### Added
+
+- **Six reliable checks** (Active-Flag-eligible): `unsigned-tenant-binding` (A01), `oauth-state-not-verified` (A07), `oauth-pkce-missing` (P4 advisory, A07 — public clients only), `static-admin-bearer` (A01), `csv-formula-injection` (A03), `token-in-logs` (A09). Registered in the CATEGORY TAXONOMY + OWASP map.
+- **`verbose-vendor-logging`** (A09, split from token-in-logs).
+- **Decision-policy framing** in the STEP 1 v7.1 preamble: the agent adjudicates a structural predicate — *fire unless a listed exemption is provably cited; "seems safe" / "can't prove exploit" → Watch List, never silence* — plus an anti-anchoring rule (ignore the project's own security self-description) and per-check "rationalization trap" callouts. This was required to make the checks stable run-to-run; prose hardening alone plateaued at ~6/8 on the commercial-app fixture.
+
+### Changed
+
+- **Five checks marked PROVISIONAL (Watch List only)**: `verbose-vendor-logging` and `external-redirect-fetch-unvalidated` (calibrated but pure-prompt adjudication proved run-to-run flaky — external-redirect produced a false negative via "trusted partner" rationalization across four hardening rounds), plus `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header` (not yet calibrated). These await a hybrid candidate-generation script layer that finds candidates deterministically so the LLM only adjudicates "is a listed exemption provably present?".
+
+### Calibration record
+
+The six non-provisional checks reached stable, correct verdicts across repeated runs and both fixtures only after the decision-policy change — not prose alone. The cross-file dataflow checks resisted even the policy flip, hence the provisional status. Full methodology rationale in the prompt's v7.1 changelog block.
+
 ## 2026-06-12 — skill template + onboarding (no prompt change)
 
 The scan prompt is unchanged (still v7.0); this release fixes the public install story so the skill template works on a machine that isn't the author's.
