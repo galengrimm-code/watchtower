@@ -711,7 +711,15 @@ def main():
     SLUG_TO_APP_NAME = {p["slug"]: p["displayName"] for p in config["projects"]}
 
     if not APPS_JS.exists():
-        sys.exit(f"ERROR: {APPS_JS} not found. Run the index.html refactor first.")
+        # First run on a fresh clone — the repo ships only data/apps.example.js.
+        # Bootstrap an empty APPS array; every configured project merges in as new.
+        APPS_JS.write_text(
+            "// data/apps.js — generated and updated by scans/phase_c_update.py.\n"
+            "// Bootstrapped empty on first run; see data/apps.example.js for the entry shape.\n"
+            "window.APPS = [\n];\n",
+            encoding="utf-8",
+        )
+        print(f"BOOTSTRAP: {APPS_JS} did not exist — created empty APPS array (first run).")
 
     content = APPS_JS.read_text(encoding="utf-8")
     backup = APPS_JS.with_suffix(".js.phasec.bak")

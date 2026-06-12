@@ -1,24 +1,30 @@
 ---
 name: triweekly-security-scan
-description: Triweekly (~21-day) security scan: AI tool supply chain audit + NVD cross-validation + Codex adversarial pass on net-new P1 flags + commercial-app CLAUDE.md drift review, refresh Watchtower dashboard. Self-reschedules in Phase 0 (fireAt-based, not cron — true 21-day cadence). Scan version is whatever the Watchtower runtime's prompts/security-scan-prompt.md says it is.
+description: Triweekly (~21-day) security scan: AI tool supply chain audit + NVD cross-validation + Codex adversarial pass on net-new P1 flags + commercial-app CLAUDE.md drift review, refresh Watchtower dashboard. Self-reschedules in Phase 0 (one-shot timestamps, not cron — true N-day cadence) and syncs the latest scan methodology from the public watchtower repo in Phase 0.5. Scan version is whatever the synced prompts/security-scan-prompt.md says it is.
 ---
 
 <!--
-  This is the public template for Watchtower's scheduled-scan skill. To install:
+  This is the skill you download. It's the orchestrator: on every run it syncs
+  the latest scan methodology from the public watchtower repo (Phase 0.5), runs
+  the scan against your portfolio, and writes results into your local Watchtower
+  dashboard. You schedule it once; Phase 0 re-arms every subsequent run itself.
 
-  1. Drop this file (renamed to SKILL.md) into:
-       ~/.claude/scheduled-tasks/triweekly-security-scan/SKILL.md
-     The directory name becomes the taskId for the scheduled-tasks MCP.
+  To install:
+
+  1. Drop this file (renamed to SKILL.md) into your personal skills directory:
+       ~/.claude/skills/triweekly-security-scan/SKILL.md
 
   2. Replace <WATCHTOWER_CONFIG_PATH> below with the absolute path to your
      watchtower.config.json. Everywhere else, <watchtowerRoot> and <portfolioRoot>
      are read FROM that config at runtime — leave those references alone.
 
-  3. Arm the schedule once via:
-       mcp__scheduled-tasks__create_scheduled_task
-         name="triweekly-security-scan"
-         fireAt="<your first run target, ISO 8601 with TZ offset>"
-     Phase 0 self-reschedules every subsequent run.
+  3. Schedule the first run. Tell Claude Code:
+       "Schedule a one-time run of the triweekly-security-scan skill
+        tomorrow at 9pm."
+     That's it — Phase 0 of every run arms the next one, so you only schedule
+     the first run by hand. Any scheduler works (Claude Code scheduled runs,
+     a scheduled-tasks MCP, or your OS scheduler invoking Claude Code headless);
+     the contract is just "fire this skill at the armed timestamp."
 
   4. Optional but recommended: put NVD_API_KEY in ~/.claude/.env for higher
      rate limits on Phase 10 NVD cross-validation. (Free key, 30s signup at
@@ -53,15 +59,42 @@ The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` m
 **Run this BEFORE Phase A.** If the scan crashes anywhere after this point, the next run is still armed — that's the whole point of doing it first.
 
 1. Compute the next fire timestamp: now (in your local time zone) + `config.scanCadenceDays` days, at your preferred run hour. Format as ISO 8601 with the correct offset for that future date.
-2. Call `mcp__scheduled-tasks__update_scheduled_task` with:
-   - `taskId`: the directory name of this skill (`triweekly-security-scan` if you followed the install instructions) — do NOT change this even if you change cadence
-   - `fireAt`: the ISO 8601 timestamp computed above
-3. If the call returns success, log `"Next run armed for <iso-timestamp>"` and proceed to Phase A.
-4. If the call fails: do NOT proceed silently — emit a P1-equivalent warning in the final scan summary so the human notices. The chain is broken until manually re-armed.
+2. Arm a one-time run of this skill at that timestamp, using the same scheduler that fired the current run (Claude Code scheduled run, a scheduled-tasks MCP, OS scheduler — whatever you installed with). Same mechanism in, same mechanism out: don't switch schedulers mid-chain.
+3. If arming succeeds, log `"Next run armed for <iso-timestamp>"` and proceed to Phase 0.5.
+4. If arming fails: do NOT proceed silently — emit a P1-equivalent warning in the final scan summary so the human notices. The chain is broken until manually re-armed.
 
 **Why first, not last:** Putting self-rescheduling at the END means a crashed scan = dead chain. Putting it FIRST means the next scan always happens, even if today's scan was a total disaster.
 
-**Why fireAt and not cron:** True N-day cadence isn't expressible in a 5-field cron when N doesn't divide cleanly into months. fireAt gives exact spacing. The tradeoff is fragility — see paragraph above for the mitigation.
+**Why one-shot timestamps and not cron:** True N-day cadence isn't expressible in a 5-field cron when N doesn't divide cleanly into months. A self-armed one-time run gives exact spacing. The tradeoff is fragility — see paragraph above for the mitigation.
+
+## Phase 0.5 — Sync local repos from remote (ff-only, before any scanning)
+
+**Runs AFTER Phase 0 self-reschedule, BEFORE Phase A.** Two reasons this exists:
+
+1. **Methodology freshness.** The scan prompt is maintained in the public watchtower repo. Syncing `promptsRoot` (or `watchtowerRoot`, if your prompts live inside it) before each run means every scan executes the current methodology version — prompt updates reach you automatically, no manual re-download.
+2. **Code freshness.** If you push to a project from another machine (or CI commits to it), this machine's local folder is behind remote, and the scan would audit stale code and report an outdated posture as current — a false all-clear.
+
+The sync is **fast-forward-only**: it never creates a merge commit and never hits a conflict an unattended agent would have to resolve.
+
+> **Prefer to review prompt changes before adopting them?** Check out a release tag in your clone of the public watchtower repo instead of tracking `main`. The ff-only sync refuses to move a detached HEAD, so you stay pinned (it records `repo-sync-stale` for that repo — expected, ignore it) until you choose to update.
+
+**Repos to sync:** every `config.projects` folder present at `<portfolioRoot>/<folder>`, plus `watchtowerRoot` and `promptsRoot`. (Syncing `watchtowerRoot` also keeps Phase D's push from being rejected as non-fast-forward, if your runtime pushes.)
+
+For each repo path:
+1. If `<path>/.git` is absent, silent no-op (not a repo).
+2. `git -C "<path>" fetch --quiet` — read-only, never modifies the working tree.
+3. **Dirty-tree gate:** if `git -C "<path>" status --porcelain` is non-empty (uncommitted local changes), do NOT pull. Record `repo-sync-skipped-dirty` and scan whatever is local. (Uncommitted WIP is current local work — scan it, just flag that it wasn't synced.)
+4. Else `git -C "<path>" merge --ff-only "@{u}"` (keep the quotes — PowerShell parses a bare `@{u}` as a hash literal before Git ever sees it):
+   - Advanced N commits → record `synced` + the commit delta.
+   - Already up to date → record `clean`.
+   - Fails (diverged history, no upstream, detached HEAD) → do NOT force, do NOT merge. Record `repo-sync-stale` with the reason and scan whatever is local. A diverged tree usually means a prior scan committed CLAUDE.md but the push failed — surfacing it is the point.
+5. **Never fatal.** One repo's sync failure never blocks other repos, Phase A, or the rest of the scan.
+
+Fold the results into:
+- **Per-project flags:** any scanned project that returned `repo-sync-stale` or `repo-sync-skipped-dirty` gets a flag of that category appended to its `flags` array in Phase B, so the dashboard shows "scanned against possibly-stale local code" rather than implying a clean audit.
+- **Phase D commit body:** a one-line sync summary, e.g. `Sync: 14 clean, 3 synced (+N commits), 1 skipped-dirty, 0 stale.`
+
+**Why `fetch` → `status` → `merge --ff-only` instead of `git pull`:** plain `git pull` auto-merges (can create merge commits / conflicts) and gives no clean dirty-tree gate. This sequence is read-then-decide: behind → catches up cleanly; diverged or dirty → refuses and flags.
 
 ## Phase A — AI Tool Supply Chain audit (runs ONCE, before per-project scans)
 
@@ -190,13 +223,18 @@ After all scans + Codex pass complete:
    python "<watchtowerRoot>/scans/check_docs_freshness.py" --merge
    ```
 
-5. **Regenerate portfolio stats:**
+6. **Regenerate portfolio stats:**
    ```
    node "<watchtowerRoot>/scans/generate-portfolio-stats.js"
    ```
    The generator is idempotent and read-only — safe to re-run. If it fails, fix the input and re-run. The dashboard renders with stale `portfolio-stats.js` if the generator was skipped — not catastrophic, just out of date.
 
 ## Phase D — Commit and push
+
+**Two runtime modes, pick the branch that matches yours:**
+
+- **Plain clone of the public watchtower repo** (the simple setup): your scan data (`data/*.js`, `scans/*.json`, `watchtower.config.json`) is gitignored by design — `git add` stages nothing. Skip steps 1–4 (the Watchtower repo commit/push); the dashboard reads the local files directly. Record `commit-skipped (public-clone mode)` in the scan summary. **Step 5 still runs** — the per-project CLAUDE.md commits are in each project's own repo, and skipping them leaves every project dirty, which trips next cycle's Phase 0.5 dirty-tree gate.
+- **Private runtime repo** (data files tracked): follow all steps below.
 
 1. `cd "<watchtowerRoot>"`
 2. Stage the artifacts the scan touched:
@@ -317,7 +355,4 @@ Exit codes:
 - The dashboard's stats filter is independent of `config.exclusions`. Excluding a folder means it isn't scanned; categorizing it as Other/Archived means the dashboard doesn't count it in aggregate stats. Both knobs exist on purpose.
 - Quote any path with spaces in commands; never use `\ ` backslash-escape on Windows (triggers Claude Code security prompt regardless of allow rules).
 - **Codex requires the /codex skill installed and the Codex CLI authenticated on the local machine.** The scheduled task runs as your session — if Codex auth has expired, the timeout wrapper prevents a hang but Codex calls will fail-soft.
-- **If Phase 0 self-rescheduling fails one cycle, the chain is dead until re-armed.** Watch the dashboard's `lastUpdated` field — if it goes more than `config.scanCadenceDays + 3` days stale, re-arm manually:
-  ```
-  mcp__scheduled-tasks__update_scheduled_task taskId="triweekly-security-scan" fireAt="<next-target>"
-  ```
+- **If Phase 0 self-rescheduling fails one cycle, the chain is dead until re-armed.** Watch the dashboard's `lastUpdated` field — if it goes more than `config.scanCadenceDays + 3` days stale, re-arm manually the same way you scheduled the first run (e.g., tell Claude Code: "schedule a one-time run of the triweekly-security-scan skill tonight at 9pm").

@@ -23,14 +23,14 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 | Scan prompt | 1900+ lines of "what to check, what to flag," currently at v7.0 with OWASP Top 10 (2021) categorization, per-app strengths, and silent-failure / memory-growth sweeps | `prompts/security-scan-prompt.md` |
 | Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel, and per-app A–F health grades | `index.html` (data populates over time from your scheduled scans) |
 | Helper scripts | Three small Python + Node scripts that parse CLAUDE.md scan blocks, merge results, and generate stats | `scans/` |
-| Scheduled-scan skill | The orchestrator that wires Phases 0 → A → B → B.5 → B.7 → C → D into a self-rescheduling loop on whatever cadence you configure (default: every 21 days) | `examples/triweekly-security-scan.SKILL.md.template` |
+| Scheduled-scan skill | **The thing you download and schedule.** Wires Phases 0 → 0.5 → A → B → B.5 → B.7 → C → D → E into a self-rescheduling loop on whatever cadence you configure (default: every 21 days), pulling the latest scan prompt from this repo on every run | `examples/triweekly-security-scan.SKILL.md.template` |
 | Config | One JSON file with your project list, portfolio root, and exclusions — everything else derives from this | `watchtower.config.example.json` |
 
 ---
 
 ## Architecture
 
-Watchtower is three pieces: a **public methodology repo** (this one), a **private runtime instance** on your machine where the scan actually executes, and a **local skill** in `~/.claude/scheduled-tasks/` that the scheduled-tasks MCP fires on whatever cadence you set in `watchtower.config.json` (default: every 21 days). The public repo has no data — your runtime instance and skill stay private.
+Watchtower is three pieces: a **public methodology repo** (this one — the scan prompt and dashboard shell, maintained upstream), a **local clone** on your machine where the scan executes and your results live (every data file is gitignored, so the clone stays cleanly pullable), and a **skill** you install at `~/.claude/skills/` and schedule with Claude Code on whatever cadence you set in `watchtower.config.json` (default: every 21 days). On each run the skill syncs the latest scan prompt from this repo (Phase 0.5), scans your portfolio, and writes results into your local dashboard. The public repo has no data — your results never leave your machine.
 
 ```mermaid
 graph TB
@@ -43,12 +43,12 @@ graph TB
     end
 
     subgraph local["Your Local Machine"]
-        subgraph private["Your private runtime clone of watchtower"]
-            Clone[Same files as public + your real watchtower.config.json + data/apps.js + scans/*.json]
+        subgraph clone["Your clone of watchtower"]
+            Clone[Same files as public + your watchtower.config.json + data/apps.js + scans/*.json - all gitignored]
         end
 
-        subgraph skillhome["~/.claude/scheduled-tasks/triweekly-security-scan/"]
-            Skill[SKILL.md - your orchestrator]
+        subgraph skillhome["~/.claude/skills/triweekly-security-scan/"]
+            Skill[SKILL.md - the orchestrator you schedule]
         end
 
         subgraph env["~/.claude/.env"]
@@ -56,13 +56,15 @@ graph TB
         end
     end
 
-    public -.->|"manual file sync on prompt updates"| private
-    Skill -->|"reads scan prompt + writes findings"| private
+    public -->|"Phase 0.5 - ff-only git pull, every scan"| clone
+    Skill -->|"reads scan prompt + writes findings"| clone
     Skill -.->|"reads NVD key"| Secrets
     Skill -->|"NVD lookups for Phase 10"| NVD[(NVD API)]
 ```
 
-The runtime instance is whatever you want — public if you're brave, private if you have a paying app in the portfolio (recommended). The public methodology repo is just the shell. **Two-repo architecture, no fork relationship**, manual file sync when the methodology bumps.
+The simple setup is **one clone**: this repo is your dashboard, prompt, and scripts in one place, and your config + scan data sit inside it untracked. Methodology updates arrive automatically — Phase 0.5 does a fast-forward-only `git pull` before every scan (pin to a release tag if you'd rather review prompt changes first).
+
+**Want your scan history in a private repo?** (multi-machine, backup, or a paying app in the portfolio — recommended for that last one): create a private runtime repo that tracks the data files, set `watchtowerRoot` there, and point `promptsRoot` at your clone of this repo. Phase 0.5 still syncs the methodology automatically. That's the two-repo setup the author runs.
 
 ---
 
@@ -71,14 +73,16 @@ The runtime instance is whatever you want — public if you're brave, private if
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Cron as scheduled-tasks MCP
-    participant Skill as SKILL.md (Phase 0..D)
+    participant Sched as Your scheduler (Claude Code)
+    participant Skill as SKILL.md (Phase 0..E)
+    participant Pub as Public watchtower repo
     participant Code as Per-project agents
     participant Codex as /codex (optional)
     participant Dash as Watchtower dashboard
 
-    Cron->>Skill: fire (default 21 days, fireAt-based — configurable via scanCadenceDays)
+    Sched->>Skill: fire (default 21 days, one-shot timestamp — configurable via scanCadenceDays)
     Skill->>Skill: Phase 0 — self-reschedule next run FIRST
+    Skill->>Pub: Phase 0.5 — ff-only sync (latest scan prompt + project repos)
     Skill->>Skill: Phase A — AI tool supply chain audit (once)
     Skill->>Code: Phase B — parallel scans per project
     Code-->>Skill: results in each project's CLAUDE.md
@@ -86,7 +90,8 @@ sequenceDiagram
     Skill->>Codex: Phase B.7 — challenge net-new P1s + commercial app diff
     Codex-->>Skill: disagreements (or timeout)
     Skill->>Dash: Phase C — merge into data/apps.js + regenerate stats
-    Skill->>Skill: Phase D — commit + push
+    Skill->>Skill: Phase D — commit + push (private-runtime mode only)
+    Skill->>Skill: Phase E — email debrief (optional, via Resend)
 ```
 
 Phase 0 self-reschedules first, **before anything else runs**. If the scan crashes anywhere downstream, the next run is still armed. Skip this and a crashed scan means a dead chain until you notice.
@@ -108,23 +113,24 @@ Everything optional is genuinely optional. The scan runs and produces a dashboar
 
 ## Quick start (~5 minutes)
 
+Commands below are bash — on Windows, run them from **Git Bash** (ships with [Git for Windows](https://gitforwindows.org/)), not PowerShell.
+
 ```bash
-# 1. Clone the public methodology repo into a private home for your runtime
-gh repo create your-org/watchtower-runtime --private --clone
-cd watchtower-runtime
-git remote add upstream https://github.com/galengrimm-code/watchtower
-git pull upstream main
-# (keep upstream as your sync source when the methodology bumps)
+# 1. Clone this repo — it's your dashboard, scan prompt, and helper scripts in one.
+#    All scan data is gitignored, so `git pull` always brings the latest methodology
+#    without ever conflicting with your local results.
+git clone https://github.com/galengrimm-code/watchtower
+cd watchtower
 
 # 2. Copy the example config and edit it
 cp watchtower.config.example.json watchtower.config.json
 $EDITOR watchtower.config.json   # set portfolioRoot, watchtowerRoot, projects
 
-# 3. Install the scheduled-scan skill into ~/.claude/scheduled-tasks/
-mkdir -p ~/.claude/scheduled-tasks/triweekly-security-scan
+# 3. Install the scan skill (this is the orchestrator you'll schedule)
+mkdir -p ~/.claude/skills/triweekly-security-scan
 cp examples/triweekly-security-scan.SKILL.md.template \
-   ~/.claude/scheduled-tasks/triweekly-security-scan/SKILL.md
-$EDITOR ~/.claude/scheduled-tasks/triweekly-security-scan/SKILL.md
+   ~/.claude/skills/triweekly-security-scan/SKILL.md
+$EDITOR ~/.claude/skills/triweekly-security-scan/SKILL.md
 # replace <WATCHTOWER_CONFIG_PATH> with the absolute path to your watchtower.config.json
 
 # 4. (Optional) add NVD API key for higher Phase 10 rate limits
@@ -137,7 +143,13 @@ start index.html
 open index.html
 ```
 
-On first run the dashboard is empty (no `data/apps.js` yet). It populates after your first scheduled scan. To force the first run, ask Claude Code to invoke the skill manually — or arm a fireAt timestamp a minute in the future and let the MCP fire it.
+Then schedule it — tell Claude Code:
+
+> "Schedule a one-time run of the triweekly-security-scan skill tomorrow at 9pm."
+
+That's the only scheduling you ever do by hand. Phase 0 of every run arms the next one at `now + scanCadenceDays`, so the chain keeps itself alive.
+
+On first run the dashboard is empty (no `data/apps.js` yet). It populates after the first scan. Impatient? Tell Claude Code to run the skill now instead of waiting for the schedule.
 
 ---
 

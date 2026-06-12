@@ -7,6 +7,27 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-06-12 — skill template + onboarding (no prompt change)
+
+The scan prompt is unchanged (still v7.0); this release fixes the public install story so the skill template works on a machine that isn't the author's.
+
+### Added
+
+- **Phase 0.5 (methodology + repo sync)** in the skill template — fast-forward-only `git fetch` + `merge --ff-only` across every project repo, `watchtowerRoot`, and `promptsRoot` before each scan. This is how scan-prompt updates reach you automatically; it also prevents auditing stale code after pushes from another machine. Previously this phase existed only in the author's private skill while the template referenced its output ("Phase 0.5 sync summary") without defining it. Pin `promptsRoot` to a release tag if you want to review prompt changes before adopting them.
+- **Public-clone runtime mode** — documented that a plain clone of this repo works as a complete runtime (all data files are gitignored, so `git pull` never conflicts). Phase D now skips commit/push gracefully in this mode. The private-runtime two-repo setup remains the recommended path for portfolios with a commercial app.
+
+### Changed
+
+- **Scheduler-agnostic Phase 0 + install instructions** — the template no longer hardcodes `mcp__scheduled-tasks__*` tool calls (a private MCP nobody else has). Install = drop the skill into `~/.claude/skills/`, then tell Claude Code to schedule a one-time run; Phase 0 re-arms each subsequent run with whatever scheduler fired it.
+- README architecture + scan-cycle diagrams and quick start rewritten to match: single-clone setup, Phase 0.5 sync arrow, Phase E in the sequence.
+
+### Fixed (Codex review findings)
+
+- **First-run crash**: `phase_c_update.py` hard-exited when `data/apps.js` didn't exist — the state of every fresh clone. It now bootstraps an empty APPS array and merges all configured projects in as new (verified end-to-end against a simulated fresh clone).
+- Phase 0.5's `merge --ff-only "@{u}"` is now quoted — PowerShell parses a bare `@{u}` as a hash literal.
+- Public-clone-mode Phase D now states that per-project CLAUDE.md commits (step 5) still run; skipping them left every project repo dirty and tripped the next cycle's dirty-tree gate.
+- Quick start notes that the commands are bash (Git Bash on Windows).
+
 ## v7.0 — 2026-06-09
 
 Audit-dimension release: silent-failure and memory-growth sweeps, per-app strengths, A–F health grades. Adapted from community "repo audit" prompt patterns.
