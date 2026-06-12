@@ -2721,12 +2721,10 @@ function iconFallback(img) {
 }
 
 function renderIcon(app) {
-  if (app.icon && app.icon.src) {
-    // Build the full URL for deployed apps or relative path for local
-    const iconUrl = app.url ? new URL(app.icon.src, app.url).href : app.icon.src;
-    return `<img class="card-icon" src="${iconUrl}" alt="${escHtml(app.name)} icon" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"><div class="card-icon-placeholder" style="display:none">📱</div>`;
-  }
-  return `<div class="card-icon-placeholder">📱</div>`;
+  const cands = iconCandidates(app);
+  if (!cands.length) return `<div class="card-icon-placeholder">📱</div>`;
+  const data = JSON.stringify(cands).replace(/'/g, '&#39;');
+  return `<img class="card-icon" src="${cands[0]}" data-cands='${data}' data-i="0" alt="${escHtml(app.name)} icon" onerror="iconFallback(this)"><div class="card-icon-placeholder" style="display:none">📱</div>`;
 }
 
 // ===== Health grade (v7.0) =====
