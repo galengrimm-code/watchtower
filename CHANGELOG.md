@@ -14,7 +14,7 @@ The scan prompt is unchanged (still v7.0); this release fixes the public install
 ### Added
 
 - **Phase 0.5 (methodology + repo sync)** in the skill template — fast-forward-only `git fetch` + `merge --ff-only` across every project repo, `watchtowerRoot`, and `promptsRoot` before each scan. This is how scan-prompt updates reach you automatically; it also prevents auditing stale code after pushes from another machine. Previously this phase existed only in the author's private skill while the template referenced its output ("Phase 0.5 sync summary") without defining it. Pin `promptsRoot` to a release tag if you want to review prompt changes before adopting them.
-- **Public-clone runtime mode** — documented that a plain clone of this repo works as a complete runtime (all data files are gitignored, so `git pull` never conflicts). Phase D now skips commit/push gracefully in this mode. The private-runtime two-repo setup remains the recommended path for portfolios with a commercial app.
+- **Private runtime repo as the standard path** — the quick start now walks through creating your own private repo (seeded from this one) where your dashboard and audit findings live as committed history, including the .gitignore edit that makes scan data trackable. A plain clone of this repo still works as a throwaway trial runtime (data gitignored, local-only); Phase D skips commit/push gracefully in that mode.
 
 ### Changed
 

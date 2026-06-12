@@ -30,7 +30,7 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 
 ## Architecture
 
-Watchtower is three pieces: a **public methodology repo** (this one — the scan prompt and dashboard shell, maintained upstream), a **local clone** on your machine where the scan executes and your results live (every data file is gitignored, so the clone stays cleanly pullable), and a **skill** you install at `~/.claude/skills/` and schedule with Claude Code on whatever cadence you set in `watchtower.config.json` (default: every 21 days). On each run the skill syncs the latest scan prompt from this repo (Phase 0.5), scans your portfolio, and writes results into your local dashboard. The public repo has no data — your results never leave your machine.
+Watchtower is three pieces: a **public methodology repo** (this one — the scan prompt and dashboard shell, maintained upstream), a **private runtime repo you own** — your dashboard, your config, and every scan's findings, committed and pushed as history — and a **skill** you install at `~/.claude/skills/` and schedule with Claude Code on whatever cadence you set in `watchtower.config.json` (default: every 21 days). You keep a local clone of this public repo and point `promptsRoot` at it; on each run the skill syncs it (Phase 0.5) so every scan executes the latest methodology, then scans your portfolio and writes results into your runtime. The public repo has no data — your findings live in your repo, not this one.
 
 ```mermaid
 graph TB
@@ -43,8 +43,12 @@ graph TB
     end
 
     subgraph local["Your Local Machine"]
-        subgraph clone["Your clone of watchtower"]
-            Clone[Same files as public + your watchtower.config.json + data/apps.js + scans/*.json - all gitignored]
+        subgraph runtime["YOUR PRIVATE RUNTIME REPO (you create this)"]
+            Run[dashboard + scripts + your watchtower.config.json + data/apps.js + scans/*.json - all tracked, all yours]
+        end
+
+        subgraph pubclone["Your clone of this repo"]
+            PromptClone[prompts/ - promptsRoot points here]
         end
 
         subgraph skillhome["~/.claude/skills/triweekly-security-scan/"]
@@ -56,15 +60,16 @@ graph TB
         end
     end
 
-    public -->|"Phase 0.5 - ff-only git pull, every scan"| clone
-    Skill -->|"reads scan prompt + writes findings"| clone
+    public -->|"Phase 0.5 - ff-only git pull, every scan"| pubclone
+    Skill -->|"reads latest scan prompt"| pubclone
+    Skill -->|"writes findings + dashboard data"| runtime
     Skill -.->|"reads NVD key"| Secrets
     Skill -->|"NVD lookups for Phase 10"| NVD[(NVD API)]
 ```
 
-The simple setup is **one clone**: this repo is your dashboard, prompt, and scripts in one place, and your config + scan data sit inside it untracked. Methodology updates arrive automatically — Phase 0.5 does a fast-forward-only `git pull` before every scan (pin to a release tag if you'd rather review prompt changes first).
+Your audit findings are an asset — flag burndown, grade history, per-scan JSONs — and they're security-sensitive, so they belong in a **private repo you own**, committed every cycle by Phase D. Methodology updates flow the other direction automatically: Phase 0.5 does a fast-forward-only `git pull` on your clone of this repo before every scan (pin it to a release tag if you'd rather review prompt changes first). Two repos, no fork relationship. This is the setup the author runs.
 
-**Want your scan history in a private repo?** (multi-machine, backup, or a paying app in the portfolio — recommended for that last one): create a private runtime repo that tracks the data files, set `watchtowerRoot` there, and point `promptsRoot` at your clone of this repo. Phase 0.5 still syncs the methodology automatically. That's the two-repo setup the author runs.
+**Just kicking the tires?** A plain clone of this repo works as a throwaway runtime — your config and dashboard data are gitignored here, so they stay local-only with no history. One side effect is *not* local even in trial mode: scans still write SCAN:AUTO blocks into each scanned project's CLAUDE.md and commit them in those projects' repos. Fine for a trial run; move to a private runtime repo before you rely on it.
 
 ---
 
@@ -103,7 +108,7 @@ Phase 0 self-reschedules first, **before anything else runs**. If the scan crash
 - [Claude Code](https://claude.com/claude-code) 2.1.34 or newer
 - Node.js 18+
 - Python 3.10+
-- `gh` CLI (optional; used for repo visibility checks during scans)
+- `gh` CLI (recommended; the quick start uses it to create your private runtime repo — the GitHub web UI works as a substitute — and scans use it for repo visibility checks)
 - [NVD API key](https://nvd.nist.gov/developers/request-an-api-key) (optional, free, 30-second signup) — gives Phase 10 cross-validation higher rate limits
 - [Codex CLI](https://github.com/openai/codex) (optional) — required only if you want Phase B.7 adversarial review
 
@@ -116,27 +121,43 @@ Everything optional is genuinely optional. The scan runs and produces a dashboar
 Commands below are bash — on Windows, run them from **Git Bash** (ships with [Git for Windows](https://gitforwindows.org/)), not PowerShell.
 
 ```bash
-# 1. Clone this repo — it's your dashboard, scan prompt, and helper scripts in one.
-#    All scan data is gitignored, so `git pull` always brings the latest methodology
-#    without ever conflicting with your local results.
+# 1. Clone this repo — it's the methodology source your scans will pull prompt
+#    updates from (Phase 0.5 syncs it before every scan).
 git clone https://github.com/galengrimm-code/watchtower
-cd watchtower
 
-# 2. Copy the example config and edit it
+# 2. Create YOUR private runtime repo, seeded from the public files.
+#    This is where your dashboard and audit findings will live.
+#    (No gh CLI? Create a private repo in the GitHub web UI, clone it, and
+#    continue from the cd line.)
+gh repo create your-org/watchtower-runtime --private --clone
+cd watchtower-runtime
+git pull ../watchtower main
+
+# 3. Make your scan data trackable. The inherited .gitignore deliberately
+#    ignores data/*.js, scans/*.json, and watchtower.config.json — right for
+#    the public repo, wrong for YOUR private runtime. Your findings should
+#    be committed history, not loose files.
+$EDITOR .gitignore
+# delete the "Runtime data", "Per-scan history", and "Your real config"
+# entries; keep the backup (*.bak) and standard-noise sections.
+
+# 4. Copy the example config and edit it
 cp watchtower.config.example.json watchtower.config.json
-$EDITOR watchtower.config.json   # set portfolioRoot, watchtowerRoot, projects
+$EDITOR watchtower.config.json
+# set portfolioRoot, watchtowerRoot (this runtime repo), projects, and
+# promptsRoot -> the prompts/ folder inside your clone from step 1
 
-# 3. Install the scan skill (this is the orchestrator you'll schedule)
+# 5. Install the scan skill (this is the orchestrator you'll schedule)
 mkdir -p ~/.claude/skills/triweekly-security-scan
 cp examples/triweekly-security-scan.SKILL.md.template \
    ~/.claude/skills/triweekly-security-scan/SKILL.md
 $EDITOR ~/.claude/skills/triweekly-security-scan/SKILL.md
 # replace <WATCHTOWER_CONFIG_PATH> with the absolute path to your watchtower.config.json
 
-# 4. (Optional) add NVD API key for higher Phase 10 rate limits
+# 6. (Optional) add NVD API key for higher Phase 10 rate limits
 echo "NVD_API_KEY=YOUR_KEY_HERE" >> ~/.claude/.env
 
-# 5. Open the dashboard locally to confirm it loads
+# 7. Open the dashboard locally to confirm it loads
 # Windows
 start index.html
 # macOS

@@ -78,7 +78,7 @@ The sync is **fast-forward-only**: it never creates a merge commit and never hit
 
 > **Prefer to review prompt changes before adopting them?** Check out a release tag in your clone of the public watchtower repo instead of tracking `main`. The ff-only sync refuses to move a detached HEAD, so you stay pinned (it records `repo-sync-stale` for that repo — expected, ignore it) until you choose to update.
 
-**Repos to sync:** every `config.projects` folder present at `<portfolioRoot>/<folder>`, plus `watchtowerRoot` and `promptsRoot`. (Syncing `watchtowerRoot` also keeps Phase D's push from being rejected as non-fast-forward, if your runtime pushes.)
+**Repos to sync:** every `config.projects` folder present at `<portfolioRoot>/<folder>`, plus `watchtowerRoot` and the repo containing `promptsRoot`. For `promptsRoot`, resolve the containing repo first — `git -C "<promptsRoot>" rev-parse --show-toplevel` — because `promptsRoot` is typically `<public-clone>/prompts`, a subdirectory with no `.git` of its own; syncing the subdirectory path literally would hit the no-op gate below and silently leave your methodology stale. (Syncing `watchtowerRoot` also keeps Phase D's push from being rejected as non-fast-forward, if your runtime pushes.)
 
 For each repo path:
 1. If `<path>/.git` is absent, silent no-op (not a repo).
@@ -233,8 +233,8 @@ After all scans + Codex pass complete:
 
 **Two runtime modes, pick the branch that matches yours:**
 
-- **Plain clone of the public watchtower repo** (the simple setup): your scan data (`data/*.js`, `scans/*.json`, `watchtower.config.json`) is gitignored by design — `git add` stages nothing. Skip steps 1–4 (the Watchtower repo commit/push); the dashboard reads the local files directly. Record `commit-skipped (public-clone mode)` in the scan summary. **Step 5 still runs** — the per-project CLAUDE.md commits are in each project's own repo, and skipping them leaves every project dirty, which trips next cycle's Phase 0.5 dirty-tree gate.
-- **Private runtime repo** (data files tracked): follow all steps below.
+- **Private runtime repo** (the standard setup — data files tracked): follow all steps below. Every cycle's findings become committed history.
+- **Plain clone of the public watchtower repo** (trial-run mode): your scan data (`data/*.js`, `scans/*.json`, `watchtower.config.json`) is gitignored by design — `git add` stages nothing. Skip steps 1–4 (the Watchtower repo commit/push); the dashboard reads the local files directly. Record `commit-skipped (public-clone mode)` in the scan summary. **Step 5 still runs** — the per-project CLAUDE.md commits are in each project's own repo, and skipping them leaves every project dirty, which trips next cycle's Phase 0.5 dirty-tree gate.
 
 1. `cd "<watchtowerRoot>"`
 2. Stage the artifacts the scan touched:
