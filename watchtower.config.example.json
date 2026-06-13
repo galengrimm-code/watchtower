@@ -5,6 +5,8 @@
   "_promptsRoot_help": "Optional. If set, the scan reads security-scan-prompt.md and claude-md-template.md from this directory instead of <watchtowerRoot>/prompts/. Useful when you want to point your runtime at a separately-cloned copy of the public watchtower repo so you only maintain one methodology file. Omit this key (or set null) to use the default (prompts live inside the runtime repo).",
   "promptsRoot": null,
   "scanCadenceDays": 21,
+  "_selfReschedule_help": "Optional, default true. When true, Phase 0 self-arms the next run as a one-shot timestamp (now + scanCadenceDays) using whatever scheduler fired this run. Set to false ONLY if a recurring EXTERNAL scheduler owns the cadence (a Windows Scheduled Task, a cron entry, a systemd timer) — Phase 0 then stands down instead of arming, and won't emit the 'arming failed' warning. The skill never inspects or verifies the external job; that's your environment, not the skill's job.",
+  "selfReschedule": true,
   "commercialAppSlug": "your-commercial-app-slug-or-null",
   "_emailDebrief_help": "Optional. If present AND `RESEND_API_KEY` is set in ~/.claude/.env, Phase E emails a 5-section debrief (what changed / what stands out / what needs addressing / what's good / what's bad) after every scheduled scan. Requires a Resend account (https://resend.com) with a verified sending domain. To disable: omit this block or set it to null. To test without sending: `echo '# test' | python scans/send_debrief.py --subject test --dry-run`.",
   "emailDebrief": null,
@@ -44,6 +46,13 @@
       "slug": "example-experiment",
       "displayName": "Example Experiment App",
       "category": "Experiment"
+    },
+    {
+      "_comment": "folder may be a nested subpath under portfolioRoot — e.g. a client app grouped under a parent folder. The scan joins portfolioRoot + folder, so forward slashes work on every OS. slug must still be unique and filename-safe.",
+      "folder": "consulting/example-client-app",
+      "slug": "example-client",
+      "displayName": "Example Client App",
+      "category": "Active"
     }
   ]
 }

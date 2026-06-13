@@ -1,6 +1,6 @@
 ---
 name: triweekly-security-scan
-description: Triweekly (~21-day) security scan: AI tool supply chain audit + NVD cross-validation + Codex adversarial pass on net-new P1 flags + commercial-app CLAUDE.md drift review, refresh Watchtower dashboard. Self-reschedules in Phase 0 (one-shot timestamps, not cron — true N-day cadence) and syncs the latest scan methodology from the public watchtower repo in Phase 0.5. Scan version is whatever the synced prompts/security-scan-prompt.md says it is.
+description: "Triweekly (~21-day) security scan: AI tool supply chain audit + NVD cross-validation + Codex adversarial pass on net-new P1 flags + commercial-app CLAUDE.md drift review, refresh Watchtower dashboard. Self-reschedules in Phase 0 (one-shot timestamps, not cron — true N-day cadence) and syncs the latest scan methodology from the public watchtower repo in Phase 0.5. Scan version is whatever the synced prompts/security-scan-prompt.md says it is."
 ---
 
 <!--
@@ -33,7 +33,26 @@ description: Triweekly (~21-day) security scan: AI tool supply chain audit + NVD
   5. Optional: install the /codex skill if you want Phase B.7 adversarial review.
      Without it, Phase B.7 fails soft and the rest of the scan proceeds.
 
-  Delete this comment block once installed.
+  CUSTOMIZING THIS SKILL — read before you fork it:
+
+  This file is a PROMPT, and your copy at ~/.claude/skills/.../SKILL.md is YOURS.
+  Stable, structured settings (cadence, categories, recipient, promptsRoot,
+  selfReschedule) live in watchtower.config.json — change those there. For
+  behavioral tweaks (e.g. "deliver the debrief as HTML to ~/Downloads instead of
+  Resend"), you do NOT need a config key or a code change — just tell the skill,
+  in plain English, in a "## Local overrides" block at the TOP of your copy:
+
+      ## Local overrides (mine — re-state after an upstream pull)
+      - Phase E: write the debrief as HTML to ~/Downloads; do not use Resend.
+      - Phase 0: an external scheduler owns cadence (selfReschedule:false in config).
+
+  Claude runs the skill with full tools (Write, Bash), so a plain-English override
+  is honored at runtime — file delivery needs no script at all. Keeping overrides
+  in one block at the top means an upstream update only ever conflicts if it touches
+  the exact same behavior; re-applying a one-line override after a pull is seconds,
+  not a merge.
+
+  Delete this comment block once installed (keep your "## Local overrides" block).
 -->
 
 ## Config-driven (read this first)
@@ -49,6 +68,7 @@ Every path, project list, and project-specific name in this skill is derived fro
   - `exclusions` — folder names under `portfolioRoot` to ignore when sweeping
   - `projects` — canonical list of `{folder, slug, displayName, category, isCommercial?}` entries
   - `scanCadenceDays` — interval for Phase 0 self-rescheduling
+  - `selfReschedule` — optional bool, default `true`. Set `false` when an external recurring scheduler (Windows Task / cron / systemd timer) owns the cadence; Phase 0 then stands down instead of self-arming
 
 If any other path or name in this file looks hardcoded, prefer the config value. See `watchtower.config.example.json` for a starting template.
 
@@ -57,6 +77,8 @@ The scan version (e.g., `v6.7`) is read dynamically from the first `v\d+\.\d+` m
 ## Phase 0 — Self-reschedule the next run FIRST (before anything else)
 
 **Run this BEFORE Phase A.** If the scan crashes anywhere after this point, the next run is still armed — that's the whole point of doing it first.
+
+**First, check `config.selfReschedule`.** If it is explicitly `false`, an external recurring scheduler (a Windows Scheduled Task, a cron entry, a systemd timer) owns the cadence — Phase 0 must NOT self-arm. Log `"selfReschedule=false — external scheduler owns cadence; skipping self-arm"` and proceed straight to Phase 0.5. Do **not** attempt to arm and do **not** emit the arming-failed warning (there's nothing to arm and nothing is broken). The skill stays scheduler-agnostic — it does not try to inspect or verify the external job; that's the operator's environment, not the skill's concern. If `selfReschedule` is missing or `true` (the default), do the self-arm below.
 
 1. Compute the next fire timestamp: now (in your local time zone) + `config.scanCadenceDays` days, at your preferred run hour. Format as ISO 8601 with the correct offset for that future date.
 2. Arm a one-time run of this skill at that timestamp, using the same scheduler that fired the current run (Claude Code scheduled run, a scheduled-tasks MCP, OS scheduler — whatever you installed with). Same mechanism in, same mechanism out: don't switch schedulers mid-chain.
@@ -124,7 +146,7 @@ After all per-project agents return, write the per-project scan JSONs:
 python "<watchtowerRoot>/scans/write_scan_jsons.py" --date <YYYY-MM-DD>
 ```
 
-`write_scan_jsons.py` reads `watchtower.config.json` for the project list; do not pass it any other args.
+`write_scan_jsons.py` reads `watchtower.config.json` for the project list. For a full scheduled scan, pass only `--date` — it writes a JSON for every project. (An optional `--slug <project-slug>` restricts it to one project; that's for on-demand single-project rescans, not the scheduled sweep. `--slug` requires an explicit `--date` set to the *current cycle's* date — a lone single-project file stamped with a fresh date would read as a 1-project cycle in the burndown/cycle-stats pipeline.)
 
 ## Phase B.5 — Validation sweep (single sequential agent)
 
@@ -154,7 +176,10 @@ Validation: N/M projects passed structural validation on first attempt, X retrie
 
 After Phase B.5 validates structure, optionally run a focused Codex second-opinion pass. The /codex skill is an OpenAI Codex CLI wrapper; it bills to your ChatGPT subscription (no per-call cost) and has three modes: review, challenge, consult. Skip this entire phase if you don't have /codex installed.
 
-**Hard requirement: every Codex call wrapped in a 60-second timeout.** If Codex hangs on an auth prompt or rate limit, the scheduled task itself hangs — that's worse than skipping the second opinion. Use `timeout 60` in bash, or the equivalent.
+**Hard requirement: every Codex call wrapped in a 120-second timeout AND with stdin closed.** Two distinct failure modes, both fatal to an unattended run:
+
+1. **Timeout.** If Codex hangs on an auth prompt or rate limit, the scheduled task itself hangs — worse than skipping the second opinion. Use `timeout 120` in bash, or the equivalent. (120s, not 60s: a `challenge` that does web research routinely needs more than a minute, and a too-tight timeout kills a legitimately-working call.)
+2. **Open stdin.** `codex exec` blocks on "Reading additional input from stdin…" when stdin is an open non-tty pipe — which is exactly what a headless/scheduled/agent-driven run hands it. The call then hangs *before* the timeout wrapper can help on some platforms. **Redirect stdin from empty** on every Codex invocation: append `< /dev/null`. These commands are bash — run them from Git Bash on Windows, not PowerShell (PowerShell doesn't support `<` redirection; `< NUL` only works in cmd.exe). Without this, B.7 silently never fires under automation.
 
 ### Step 1: Compute net-new P1 flags this cycle
 
@@ -167,7 +192,7 @@ After Phase B.5 validates structure, optionally run a focused Codex second-opini
 
 For each net-new P1 (max 3):
 1. Build a self-contained prompt: the flag text, the category, the relevant file path(s) + line numbers from the scan JSON, and 30-50 lines of surrounding code context.
-2. Run: `timeout 60 /codex challenge "<prompt>"`.
+2. Run: `timeout 120 /codex challenge "<prompt>" < /dev/null` (Git Bash).
 3. Capture stdout. If Codex disagrees substantively, record a `{project, flag, codexResponse}` entry.
 4. If timeout fires or Codex errors, record `{project, flag, codexStatus: "timeout"|"error", reason}` — do NOT block the pipeline.
 
@@ -176,7 +201,7 @@ For each net-new P1 (max 3):
 Skip this step entirely if `config.commercialAppSlug` is null or the resolved folder doesn't exist.
 
 1. After Phase B updates the commercial app's CLAUDE.md, stage the change but do NOT commit yet.
-2. Run: `cd "<portfolioRoot>/<commercial-app-folder>" && timeout 60 /codex review` on the staged diff.
+2. Run: `cd "<portfolioRoot>/<commercial-app-folder>" && timeout 120 /codex review < /dev/null` (Git Bash) on the staged diff.
 3. Codex's job: did Claude accurately describe what changed in this codebase, or did it hallucinate architecture details for files it didn't actually read?
 4. Capture stdout. If Codex flags inaccuracies, record them.
 

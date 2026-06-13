@@ -127,10 +127,14 @@ git clone https://github.com/galengrimm-code/watchtower
 
 # 2. Create YOUR private runtime repo, seeded from the public files.
 #    This is where your dashboard and audit findings will live.
-#    (No gh CLI? Create a private repo in the GitHub web UI, clone it, and
-#    continue from the cd line.)
+#    (Replace "your-org" with your GitHub org — or just your username if you
+#    don't have an org. No gh CLI? Create a private repo in the GitHub web UI,
+#    clone it, and continue from the cd line.)
 gh repo create your-org/watchtower-runtime --private --clone
 cd watchtower-runtime
+# A freshly-created empty repo may check out as "master" depending on your git
+# default; normalize to main before seeding so your first push lands on main.
+git branch -m main 2>/dev/null || true
 git pull ../watchtower main
 
 # 3. Make your scan data trackable. The inherited .gitignore deliberately
@@ -154,8 +158,17 @@ cp examples/triweekly-security-scan.SKILL.md.template \
 $EDITOR ~/.claude/skills/triweekly-security-scan/SKILL.md
 # replace <WATCHTOWER_CONFIG_PATH> with the absolute path to your watchtower.config.json
 
-# 6. (Optional) add NVD API key for higher Phase 10 rate limits
+# 6. (Optional) add NVD API key for higher Phase 10 rate limits.
+#    The signup form is Cloudflare-protected (a human has to fill it — agents
+#    can't) and shows the key exactly once, so copy it before closing the tab.
 echo "NVD_API_KEY=YOUR_KEY_HERE" >> ~/.claude/.env
+#    SECURITY — agent-assisted installs: if an AI agent is running this install
+#    for you, do NOT paste the key into the chat. The command string above lands
+#    the key in the conversation transcript (and the model-provider request) even
+#    if you delete .env later. Instead, save the key to a one-line file and have
+#    the agent append it WITHOUT reading it, e.g. on PowerShell:
+#      Get-Content key.txt | ForEach-Object { "NVD_API_KEY=$_" } | Add-Content ~\.claude\.env
+#    then delete the file. Only the file path enters the transcript, never the key.
 
 # 7. Open the dashboard locally to confirm it loads
 # Windows
@@ -169,6 +182,10 @@ Then schedule it — tell Claude Code:
 > "Schedule a one-time run of the triweekly-security-scan skill tomorrow at 9pm."
 
 That's the only scheduling you ever do by hand. Phase 0 of every run arms the next one at `now + scanCadenceDays`, so the chain keeps itself alive.
+
+> **This is not a reminder — it runs.** "Schedule the scan" reads like "remind me to scan," but `scanCadenceDays` doesn't nudge you: it autonomously runs the full scan, writes a SCAN:AUTO block into every scanned project's `CLAUDE.md`, and pushes. You schedule it once; after that the scan runs itself and your job is reading the results on the dashboard (and the email debrief, if you wired up Resend). The cloud scheduler is the recommended driver — it survives reboots and doesn't depend on this machine being awake.
+
+**Prefer your OS scheduler?** The self-arming one-shot chain is scheduler-agnostic — any mechanism that can fire the skill at an armed timestamp works. If you'd rather not depend on the chain re-arming itself, a recurring OS task (Windows Task Scheduler, a systemd timer) expresses "every N days" natively and has no chain to break. **If you go this route, set `"selfReschedule": false` in `watchtower.config.json`** — otherwise Phase 0 *also* self-arms a one-shot every run and you get duplicate, overlapping scans (two runs, double commits). With the flag off, Phase 0 stands down and your OS job is the sole cadence. The cloud scheduler is the path the author runs and the one this README assumes; an OS task is a supported alternative, not the default.
 
 On first run the dashboard is empty (no `data/apps.js` yet). It populates after the first scan. Impatient? Tell Claude Code to run the skill now instead of waiting for the schedule.
 
@@ -225,7 +242,7 @@ If `/codex` is installed and authenticated, Watchtower runs a focused second-opi
 1. **Net-new P1 challenge** — diffs this cycle's P1 flags against the previous cycle. Up to 3 net-new entries get sent to `/codex challenge`, which is asked to argue the flag is wrong or find a counterexample.
 2. **Commercial-app CLAUDE.md review** — if `config.commercialAppSlug` is set, the diff to that project's CLAUDE.md gets sent to `/codex review`. Codex's job is to check whether the scan actually read the codebase or hallucinated architecture details.
 
-Every Codex call is wrapped in a 60-second timeout. If Codex hangs on an auth prompt, the scan still ships — just without the second opinion.
+Every Codex call is wrapped in a 120-second timeout with stdin closed (`< /dev/null`). If Codex hangs on an auth prompt — or blocks reading stdin under a headless scheduled run — the scan still ships, just without the second opinion.
 
 Codex disagreements land in the Phase D commit message under `## Codex second opinion` so you see them in the next time you `git log`.
 

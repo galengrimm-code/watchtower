@@ -184,12 +184,51 @@ def parse_flags(scan_section):
 def main():
     parser = argparse.ArgumentParser(description="Write per-project scan JSONs.")
     parser.add_argument("--date", default=None, help="Scan date (YYYY-MM-DD). Defaults to today (UTC).")
+    parser.add_argument("--slug", default=None,
+                        help="Only write the JSON for this project slug. Omit to write all "
+                             "config.projects (the default for a full scheduled scan). Use for "
+                             "on-demand single-project rescans so you don't restamp every other "
+                             "project's JSON with today's date from possibly-stale CLAUDE.md blocks. "
+                             "Requires an explicit --date (see below).")
     args = parser.parse_args()
+
+    # A single-slug rescan must land inside an EXISTING scan cycle, not mint a new
+    # one. The stats pipeline groups scans/*-<date>.json by date: generate-portfolio-
+    # stats.js counts each date as a cycle (projects++ per file) and compute-cycle-
+    # stats.js picks the newest prior date as the baseline. A lone --slug write
+    # stamped with today's date would read as a 1-project cycle — skewing burndown
+    # and shifting the next debrief's baseline. Force the caller to name the cycle.
+    if args.slug and not args.date:
+        sys.exit(
+            "ERROR: --slug requires an explicit --date so the single-project JSON joins the "
+            "current scan cycle instead of creating a fake 1-project one. Pass the date of the "
+            "cycle you're refreshing, e.g. --date <last-full-scan-date>."
+        )
 
     scan_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     config = load_config()
     portfolio_root = Path(config["portfolioRoot"])
     projects = config["projects"]
+    if args.slug:
+        # Enforce "join an EXISTING cycle", not just "a date was supplied": there
+        # must already be at least one OTHER project's scan JSON dated <scan_date>.
+        # A full scan writes every project's JSON for the cycle date first; a
+        # single-slug rescan then joins that date. If no sibling file exists, the
+        # lone --slug write would be the only file dated <scan_date> and the stats
+        # pipeline (generate-portfolio-stats.js / compute-cycle-stats.js) would read
+        # it as a fake 1-project cycle — the exact thing this guard prevents.
+        siblings = [p for p in SCANS_DIR.glob(f"*-{scan_date}.json")
+                    if p.name != f"{args.slug}-{scan_date}.json"]
+        if not siblings:
+            sys.exit(
+                f"ERROR: --slug rescan must join an existing cycle, but no other "
+                f"scans/*-{scan_date}.json exists for {scan_date}. Pass the date of a "
+                f"completed full scan so the single-project file lands inside that cycle "
+                f"instead of minting a fake 1-project one."
+            )
+        projects = [p for p in projects if p["slug"] == args.slug]
+        if not projects:
+            sys.exit(f"ERROR: --slug '{args.slug}' matched no project in watchtower.config.json")
 
     written = []
     errors = []
