@@ -7,6 +7,22 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-06-24 — v7.2 (dependency supply-chain hardening + mass-assignment upgrade)
+
+Borrowed selectively at the methodology level from the public Anthropic-Cybersecurity-Skills corpus — pentest/live techniques (Burp, live targets, "written authorization") were discarded as out of scope for an unattended static sweep; only detection substance that survives as static code review was adopted. No third-party code or skills were installed.
+
+### Added
+
+- **`malicious-install-script`** (P1, A08) — the dangerous subset split off the noisy `supply-chain-install-scripts` (P3). Escalates ONLY on a dangerous combination (remote fetch + execution, credential read + network exfil, or obfuscation + execution) — a single weak signal stays P3. Emitted instead of `supply-chain-install-scripts` for that dependency, never both. ~2% of npm packages use install scripts legitimately, so the behavior combination — not the presence — is the signal.
+- **`dependency-confusion`** (PROVISIONAL, Watch List only, A08) — scoped/internal-looking packages with no private-registry pin in `.npmrc`. Kept provisional (not an Active Flag) because confirming a name is actually private/claimable needs a registry-ownership lookup the unattended prompt can't do — `.npmrc`-absence alone false-positives on legitimate public scopes. Joins the candidate-generation script lane with `typosquat-dependency`.
+- **`typosquat-dependency`** (PROVISIONAL, Watch List only, A08) — names within edit-distance 1–2 of a popular package. Pure-prompt name-similarity is unreliable (needs Levenshtein + registry lookups), so it joins the candidate-generation script lane with the v7.1 provisionals; never an Active Flag until that script lands.
+
+### Changed
+
+- **`mass-assignment`** (still PROVISIONAL) — widened the privileged-field list and made the predicate an explicit allowlist-vs-denylist test: a schema that STRIPS unknown keys clears; a denylist that deletes a few known-bad keys does not.
+- **`nosql-injection`** (existing P1) — added the operator-injection signature: request input reaching a Mongo/Mongoose query as an object rather than a coerced string (`$ne`/`$gt`/`$regex`/`$where` auth bypass), not just raw query concatenation.
+- **`supply-chain-install-scripts`** — added its previously-missing OWASP A08 mapping while reworking the install-script area.
+
 ## 2026-06-12 — v7.1 (multi-file authorization & protocol checks)
 
 Eleven STEP 1 semantic-logic checks for the bug class a pattern-scanner structurally can't reach: verifying a control is not just *present* but *correct for the right user and the right data*. Cross-vendor reviewed (Claude Fable 5 + Opus 4.8 + OpenAI Codex) and hand-verified against two production codebases before inclusion.

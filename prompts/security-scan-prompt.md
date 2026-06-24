@@ -5,9 +5,17 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.1
+# Security Scan Prompt v7.2
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.2 additions (2026-06-24) — dependency supply-chain hardening + mass-assignment upgrade (borrowed selectively at the methodology level from the public Anthropic-Cybersecurity-Skills corpus; pentest/live techniques discarded, only static-scannable detection kept — no third-party code or skills installed):**
+- STEP 1: install-script triage upgraded — the existing `supply-chain-install-scripts` (P3) bullet now escalates to a new **`malicious-install-script` (P1, A08)** category ONLY on a dangerous *combination* (remote fetch + execution, credential read + network exfil, or obfuscation + execution) — a single weak signal (`process.env`, `node -e`, `atob(` alone) stays P3. Emitted INSTEAD OF `supply-chain-install-scripts` for that dependency, never both. Splits real install-time malware out of the benign-install-script noise (~2% of npm packages use install scripts legitimately — the *behavior combination*, not the presence, is the signal).
+- STEP 1: new **`dependency-confusion` — PROVISIONAL (Watch List only), A08** — scoped/internal-looking packages with no private-registry pin in `.npmrc`. Kept provisional (not an Active Flag) because confirming a name is actually private/claimable needs a registry-ownership lookup the unattended prompt can't do — `.npmrc`-absence alone false-positives on legitimate public scopes. Joins the candidate-generation script lane with `typosquat-dependency`. (Caught by Codex on the v7.2 review.)
+- STEP 1: new **`typosquat-dependency` — PROVISIONAL (Watch List only)** — dependency names within edit-distance 1–2 of a popular package. Pure-prompt name-similarity is unreliable (needs Levenshtein + registry age/download lookups), so this joins the candidate-generation script lane alongside the v7.1 provisionals; never an Active Flag until that script layer lands.
+- STEP 1: `mass-assignment` (still PROVISIONAL) definition sharpened — widened the privileged-field list and made the predicate an explicit **allowlist-vs-denylist** test: a schema that STRIPS unknown keys clears; a denylist that deletes a few known-bad keys does NOT.
+- STEP 1: `nosql-injection` (existing P1) sharpened — added the operator-injection signature: request input reaching a Mongo/Mongoose query as an *object* rather than a coerced string, enabling `$ne`/`$gt`/`$regex`/`$where` auth-bypass — not just raw query concatenation.
+- Scope note: the source corpus is a pentest/SOC/forensics collection (live targets, Burp, "written authorization") — out of scope for Watchtower's unattended static portfolio sweep. Only the detection substance that survives as static code review was adopted.
 
 **v7.1 additions (2026-06-12) — multi-file authorization & protocol checks (verified against two production codebases, cross-vendor: Claude Fable 5 + Opus 4.8 + OpenAI Codex):**
 - STEP 1: eleven semantic-logic checks for bug classes a single-file grep can't see, each hand-verified against real findings before inclusion. New categories: `unsigned-tenant-binding`, `oauth-state-not-verified`, `oauth-pkce-missing`, `static-admin-bearer`, `csv-formula-injection`, `token-in-logs`, `verbose-vendor-logging`, `external-redirect-fetch-unvalidated`, `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header`.
@@ -91,7 +99,7 @@ Run these commands and include the results:
   - `git log --all -p --diff-filter=A -- '*.env*' '*.key' '*.pem'` (general secrets)
   - For each match: note the commit hash, date, file, and whether the secret is still in the current tree
 - Check if any .env files (not .env.example or .env.sample) are tracked by git: `git ls-files '*.env' '.env.*' | grep -v '.example\|.sample\|.template'` — tracked .env files are leaked secrets
-- Check production dependencies for install scripts that could be supply chain attacks: look for preinstall, postinstall, or install scripts in direct production dependencies' package.json files (devDependency install scripts are lower risk)
+- Check production dependencies for install scripts that could be supply chain attacks: look for preinstall, postinstall, or install scripts in direct production dependencies' package.json files (devDependency install scripts are lower risk). **Triage by behavior, don't just count.** A benign build step (node-gyp compile, `husky install`, `patch-package`) stays `supply-chain-install-scripts` (P3). Escalate to `malicious-install-script` (P1) ONLY on a dangerous COMBINATION, never a single weak signal — bare `node -e`, `process.env`, `Function(`, `atob(`, or a lone fetch all appear in benign installers and do NOT qualify alone. Require one of: (a) **remote fetch + execution** — downloads code (`curl`/`wget`/`fetch`/`Invoke-WebRequest`) AND runs it (`| sh`, `| bash`, `node -e`, `eval`); (b) **credential access + exfil** — reads env/credential files (`~/.npmrc`, `~/.aws`, `id_rsa`, `.env`, `process.env`) AND sends them over the network; or (c) **obfuscation + execution** — a long base64/hex blob decoded (`atob(`/hex) AND passed to `eval(`/`Function(`/a shell. A single signal alone stays `supply-chain-install-scripts` (P3). Quote the offending script line. **Emit `malicious-install-script` INSTEAD OF `supply-chain-install-scripts` for that dependency — never both.**
 - Check if source maps (.map files) are included in the production build output
 - Run `gh repo view --json visibility -q .visibility` to check if the repo is public or private (if gh CLI is available, otherwise note "unknown")
 - Count total lines of code: `find . -type f \( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" -o -name "*.css" -o -name "*.html" -o -name "*.json" \) -not -path "*/node_modules/*" -not -path "*/.next/*" -not -path "*/dist/*" -not -path "*/build/*" -not -name "package-lock.json" | xargs wc -l`
@@ -310,8 +318,8 @@ Run these commands and include the results:
 - **Mass assignment** (`mass-assignment`, moderate, A01/A04) — **PROVISIONAL (Watch List only)**:
   - Not yet calibrated — emit to the **Watch List (confidence < 0.8)** only.
   - Find: `rg -n "\.(insert|update|upsert|create)\(\s*(req\.body|\{\s*\.\.\.req\.body|body\)|\{\s*\.\.\.body)|Object\.assign\([^,]*,\s*req\.body|\.\.\.(req\.body|body)\b" --type=js --type=ts api app pages 2>/dev/null`
-  - FLAG when `req.body` (or a wholesale spread/`Object.assign` of it) flows into a DB write without an explicit field allowlist — caller can set columns the handler never intended (`role`, `org_id`, `is_admin`, `plan`).
-  - Guard (do NOT flag): the body is validated by a schema that STRIPS unknown keys (Zod `.strict()`/`.parse`, Yup, an ORM-level column allowlist) and the result — not raw body — is written; OR fields are explicitly destructured and mapped.
+  - FLAG when `req.body` (or a wholesale spread/`Object.assign` of it) flows into a DB write without an explicit field **allowlist** — caller can set columns the handler never intended. Privileged/sensitive columns to weigh when judging impact: `role`, `is_admin`, `org_id`, `tenant_id`, `plan`, `price`, `balance`, `credits`, `verified`, `email_verified`, `status`.
+  - Guard (do NOT flag): the body is validated by a schema that STRIPS unknown keys (Zod `.strict()`/`.parse`, Yup, an ORM-level column allowlist) and the result — not raw body — is written; OR fields are explicitly destructured and mapped. **Allowlist clears; a denylist does NOT** — code that merely deletes a few known-bad keys (`delete body.role`) is not an allowlist and still flags, because the next privileged column added to the schema won't be on the denylist.
   - Text (Watch List): "{file:line} writes `req.body` wholesale into {table} with no field allowlist — a caller can set unintended columns (privilege/tenant escalation)."
 
 - **Trusted client header** (`trusted-client-header`, critical, A01) — **PROVISIONAL (Watch List only)**:
@@ -320,6 +328,20 @@ Run these commands and include the results:
   - FLAG when an authorization or tenant-scoping decision reads a client-supplied custom header (`x-org-id`, `x-user-id`, `x-role`) instead of the authenticated session.
   - Guard (do NOT flag): headers injected/verified by trusted infrastructure (a gateway/proxy that strips-then-sets them, a verified signed header); standard headers used for non-authz purposes (content negotiation, request IDs for tracing).
   - Text (Watch List): "{file:line} makes an authz/tenant decision from client header `{header}` — trivially forgeable; scope from the session instead."
+
+**v7.2 — dependency supply-chain (npm manifest + registry):**
+
+- **Dependency confusion** (`dependency-confusion`, moderate, A08) — **PROVISIONAL (Watch List only)**:
+  - Whether a scoped name is actually private, already publicly owned, or claimable is a registry-ownership fact the unattended prompt can't verify — absence of an `.npmrc` pin alone false-positives on legitimate public scopes, and the guard list below is only a sample. Emit to the **Watch List (confidence < 0.8)** only, never an Active Flag, until the candidate-generation script does the real registry/ownership lookup (same lane as `typosquat-dependency`).
+  - Candidate signal: a scoped or internal-looking package in `package.json` (`@<org>/...`, or unscoped names that read internal like `acme-internal-utils`, `<company>-billing-sdk`) with NO private-registry pin covering that scope in `.npmrc`/`.yarnrc` (`@<org>:registry=https://...` or a project-wide private `registry=`) — it would resolve from the public registry, where a higher-versioned malicious package of the same name can win resolution (Birsan substitution).
+  - Guard (do NOT watch-list): the scope is pinned to a private registry; the package is a known PUBLIC scoped package (`@types/*`, `@supabase/*`, `@radix-ui/*`, `@vercel/*`, `@tanstack/*`, etc.); a monorepo workspace package resolved locally (`workspace:`/`file:` protocol).
+  - Text (Watch List): "`{package}` is a scoped/internal dependency with no private-registry pin in `.npmrc` — IF it is a private name, public-registry substitution (dependency confusion) is possible. Verify ownership; pin the scope or defensively register the name."
+
+- **Typosquat dependency** (`typosquat-dependency`, moderate, A08) — **PROVISIONAL (Watch List only)**:
+  - Pure-prompt name-similarity is unreliable — real detection needs Levenshtein distance plus registry age/download-count lookups the scan can't do inline. Emit to the **Watch List (confidence < 0.8)** only, never an Active Flag, until the candidate-generation script lands (same lane as the v7.1 provisionals).
+  - Candidate signal: a dependency name within edit-distance 1–2 of a high-popularity package (`expresss`→`express`, `crossenv`→`cross-env`, `lodahs`→`lodash`, `momnet`→`moment`), or separator/scope manipulation of one (`react-dom-router`, `@types-node`).
+  - Guard (do NOT watch-list): exact matches to real packages; well-known packages whose names merely resemble each other (`react` vs `preact`); first-party/internal names that are intentional.
+  - Text (Watch List): "`{package}` is within edit-distance {n} of popular package `{target}` — possible typosquat. Verify it's the intended package (check author, age, download count) before trusting it."
 
 Also extract the deployed URL:
 - Check vercel.json for "alias" or "domains" fields
@@ -1400,7 +1422,7 @@ P1 — Critical:
 - RLS policies not yet implemented → category: no-rls
 - File operations with user-controlled paths (../../etc/passwd) → category: path-traversal
 - User input in template engine expressions → category: template-injection
-- Unparameterized NoSQL queries with user input → category: nosql-injection
+- Unparameterized NoSQL queries with user input, OR request input (`req.body`/`req.query`) reaching a Mongo/Mongoose query as an object rather than a coerced string — enabling `$ne`/`$gt`/`$regex`/`$where` operator injection (classic auth bypass: `{username:{$ne:null},password:{$ne:null}}`) → category: nosql-injection
 - JWT with weak/no signature verification or alg:none → category: jwt-vulnerability
 - Untrusted data in JSON.parse callbacks, pickle, YAML.load → category: deserialization
 - Client-side role checks (is_admin) without server-side enforcement → category: privilege-escalation
@@ -1547,7 +1569,7 @@ These are the valid category keys for flags. Every flag must use one of these:
 | webhook-no-signature | P2 | Webhook endpoint without signature verification |
 | path-traversal | P1 | File operations with user-controlled paths |
 | template-injection | P1 | User input in template engine expressions |
-| nosql-injection | P1 | Unparameterized NoSQL queries with user input |
+| nosql-injection | P1 | Unparameterized NoSQL queries with user input, or request input reaching a query as an object enabling $ne/$gt/$regex/$where operator injection (auth bypass) |
 | oauth-broad-scopes | P3 | OAuth scopes broader than necessary |
 | jwt-vulnerability | P1 | JWT with weak/no signature verification |
 | deserialization | P1 | Untrusted data in deserialization (JSON.parse callbacks, pickle, YAML.load) |
@@ -1622,6 +1644,9 @@ These are the valid category keys for flags. Every flag must use one of these:
 | rls-write-side-coverage | moderate | PROVISIONAL (Watch List only): table has SELECT policies but no INSERT/UPDATE/DELETE policy while written via the RLS-enforced client. Needs usage context. (v7.1) |
 | mass-assignment | moderate | PROVISIONAL (Watch List only): `req.body` written wholesale into a DB write with no field allowlist — caller can set unintended columns. (v7.1) |
 | trusted-client-header | critical | PROVISIONAL (Watch List only): authz/tenant decision read from a client-supplied custom header instead of the session — trivially forgeable. (v7.1) |
+| malicious-install-script | P1 | Dependency install script (pre/post/install) does a dangerous combination — remote fetch + execution, credential read + network exfil, or obfuscation + execution. Install-time RCE / supply-chain malware. The dangerous subset of supply-chain-install-scripts; emitted instead of it, never both. (v7.2) |
+| dependency-confusion | moderate | PROVISIONAL (Watch List only): scoped/internal dependency with no private-registry pin — possibly claimable on the public registry (Birsan). Needs a registry-ownership lookup the prompt can't do; pending candidate-generation script. (v7.2) |
+| typosquat-dependency | moderate | PROVISIONAL (Watch List only): dependency name within edit-distance 1–2 of a popular package — possible typosquat. Pending candidate-generation script. (v7.2) |
 
 ---
 
@@ -1699,6 +1724,10 @@ Reference: https://owasp.org/Top10/ (© OWASP Foundation, CC BY-SA 4.0)
 | cdn-no-sri | A08 |
 | unpinned-cdn | A08 |
 | gha-unpinned-action | A08 |
+| supply-chain-install-scripts | A08 |
+| malicious-install-script | A08 |
+| dependency-confusion | A08 |
+| typosquat-dependency | A08 |
 | missing-dmarc | A05 |
 | dmarc-policy-none | A05 |
 | missing-spf | A05 |
