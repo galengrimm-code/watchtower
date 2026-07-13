@@ -14,6 +14,17 @@ every project in watchtower.config.json. Four checks per project:
   4. Last reviewed — `Last reviewed: YYYY-MM-DD` lines older than 90 days.
      (Absence of the convention is NOT flagged.)
 
+Plus two Watchtower-self checks that run ONCE (not per project) and route their
+findings onto the Watch Tower app's own stale-docs flag:
+
+  5. Scan-prompt version drift — the README + CLAUDE.md runbook must cite the
+     version in the scan-prompt header (the machine-readable source of truth).
+  6. Repo mirror drift — code scripts shared between the private runtime and the
+     public methodology repo must stay identical (newline-normalized, so a pure
+     CRLF/LF checkout difference isn't cried as drift); index.html may differ only
+     by its known title/header lines. The mirror set is DISCOVERED (code files
+     present in both scans/ dirs), never hardcoded.
+
 Output: report to stdout + scans/docs-freshness.json. With --merge, each
 project with findings gets exactly ONE consolidated P4 `stale-docs` flag in
 data/apps.js (replacing any prior active stale-docs flag; accepted/resolved
@@ -69,6 +80,13 @@ CURRENT_VERSION_CLAIM = re.compile(
 # a current-version claim. Mirrors the INTENTIONAL exemption used in Check 2.
 HISTORICAL_REF = re.compile(
     r"\b(added|since|introduced|was|prior|formerly|previously|before)\b", re.I
+)
+# The lines index.html is ALLOWED to differ on between the two repos: the runtime
+# brands "Watch Tower" / "Galen Grimm", the public shell says "Watchtower" / has an
+# empty subtitle slot. Anchored to the SPECIFIC title/h1/subtitle elements (not a
+# bare `class="sub"` substring) so Check 6 still catches any OTHER dashboard drift.
+MIRROR_INDEX_DELTA = re.compile(
+    r'<title>.*</title>|<h1>\s*Watch\s?[Tt]ower\s*</h1>|<span class="sub"[^>]*>.*?</span>'
 )
 
 
@@ -131,6 +149,60 @@ def watchtower_self_name(config, portfolio_root):
         if (portfolio_root / proj["folder"]).resolve() == WATCHTOWER_ROOT:
             return proj["displayName"]
     return "Watch Tower"
+
+
+def mirror_drift(config):
+    """Code scripts shared between the runtime and the public methodology repo must
+    stay identical; index.html may differ only by its known title/header lines.
+    Returns drift findings. Fails open ([]) when the public repo isn't present
+    alongside the runtime (e.g. a stranger's clone of just one repo).
+
+    Self-maintaining: the mirror set is DISCOVERED (every code file present in both
+    scans/ dirs), never hardcoded — a new shared script is covered automatically,
+    a runtime-only script is ignored automatically.
+    """
+    prompts_root = config.get("promptsRoot")
+    if not prompts_root:
+        return []
+    public_root = Path(prompts_root).parent.resolve()  # resolve so the == guard is symlink/case/rel-safe
+    rt_scans = WATCHTOWER_ROOT / "scans"
+    pub_scans = public_root / "scans"
+    if public_root == WATCHTOWER_ROOT or not pub_scans.is_dir():
+        return []  # no distinct public repo to compare against
+
+    # Compare CONTENT, newline-normalized — a CRLF/LF checkout difference between
+    # the two repos is not a real hand-sync miss, and byte-comparing would cry
+    # wolf on every script the moment git normalized line endings differently.
+    def norm(path):
+        return read(path).splitlines()
+
+    findings = []
+    CODE_EXT = (".py", ".js", ".mjs", ".cjs", ".ts", ".sh")  # code, not data (.json/.md would false-positive)
+    for rt_file in sorted(rt_scans.iterdir()):
+        if not rt_file.is_file() or rt_file.suffix not in CODE_EXT:
+            continue
+        pub_file = pub_scans / rt_file.name
+        if not pub_file.exists():
+            continue  # runtime-only script — not part of the mirror set
+        if norm(rt_file) != norm(pub_file):
+            findings.append(
+                f"scans/{rt_file.name} has drifted between the runtime and the public repo"
+            )
+
+    # index.html: must exist in BOTH (absence on one side is itself drift), and
+    # match once the known branding lines are masked out.
+    rt_index, pub_index = WATCHTOWER_ROOT / "index.html", public_root / "index.html"
+    if rt_index.exists() != pub_index.exists():
+        findings.append("index.html is present in one repo but missing from the other")
+    elif rt_index.exists():
+        rt_body = [ln for ln in norm(rt_index) if not MIRROR_INDEX_DELTA.search(ln)]
+        pub_body = [ln for ln in norm(pub_index) if not MIRROR_INDEX_DELTA.search(ln)]
+        if rt_body != pub_body:
+            findings.append(
+                "index.html has drifted between the runtime and the public repo "
+                "beyond its intended title/header deltas"
+            )
+    return findings
 
 
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "out", ".vercel", "coverage"}
@@ -340,20 +412,30 @@ def main():
             for f in findings:
                 print(f"    - {f}")
 
-    # Check 5 (Watchtower-self): the scan prompt's header version is the source
-    # of truth; our own README + runbook must match it. Route any drift onto the
-    # Watch Tower app's own stale-docs flag so it rides the same machinery.
+    # Checks 5 & 6 (Watchtower-self): run once, route any drift onto the Watch
+    # Tower app's own stale-docs flag so it rides the same merge/burndown machinery.
+    # Each fails open — a self-check must never break the whole freshness run.
+    self_name = watchtower_self_name(config, portfolio_root)
     try:
-        _canonical, drift = scan_version_drift(config)
-    except Exception as e:  # noqa: BLE001 — fail open; a bad-encoding doc must never break the run
+        _canonical, vdrift = scan_version_drift(config)  # 5: docs vs prompt-header version
+    except Exception as e:  # noqa: BLE001 — fail open
         print(f"  SKIP version-drift check: {e}", file=sys.stderr)
-        drift = []
-    if drift:
-        self_name = watchtower_self_name(config, portfolio_root)
-        results.setdefault(self_name, []).extend(drift)
-        print(f"  {self_name} (scan-prompt version drift):")
-        for f in drift:
-            print(f"    - {f}")
+        vdrift = []
+    try:
+        mdrift = mirror_drift(config)  # 6: runtime <-> public repo byte-identity
+    except Exception as e:  # noqa: BLE001 — fail open
+        print(f"  SKIP mirror-drift check: {e}", file=sys.stderr)
+        mdrift = []
+    if vdrift or mdrift:
+        results.setdefault(self_name, []).extend(vdrift + mdrift)
+        if vdrift:
+            print(f"  {self_name} (scan-prompt version drift):")
+            for f in vdrift:
+                print(f"    - {f}")
+        if mdrift:
+            print(f"  {self_name} (repo mirror drift):")
+            for f in mdrift:
+                print(f"    - {f}")
 
     clean = sum(1 for f in results.values() if not f)
     flagged = len(results) - clean
