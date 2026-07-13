@@ -48,6 +48,29 @@ REL_PATH = re.compile(r"`([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z]{1,5})`"
 LAST_REVIEWED = re.compile(r"Last reviewed:\s*(\d{4}-\d{2}-\d{2})", re.I)
 SCAN_AUTO_BLOCK = re.compile(r"<!-- SCAN:AUTO:START.*?SCAN:AUTO:END[^>]*-->", re.S)
 
+# The scan-prompt version is machine-derivable from the prompt's own header —
+# the single source of truth (phase_c_update.py reads the same line). Watchtower's
+# own docs hand-cite this version and have silently drifted from it before
+# (README said v7.0, runbook said v7.1, while the prompt was v7.2). Check 5 makes
+# that drift self-catching every cycle instead of relying on someone noticing.
+SCAN_PROMPT_VERSION = re.compile(r"^#\s*Security Scan Prompt\s+(v\d+\.\d+)", re.M)
+# An ALLOWLIST of "claims the CURRENT version" phrasings, NOT every vN.N mention.
+# Case-insensitive and tolerant of smart apostrophes (docs get auto-curly-quoted —
+# an ASCII-only "It's" would silently go blind, defeating the whole gate). Paired
+# with HISTORICAL_REF so a changelog line ("Scan Prompt v7.0 added…") is exempted
+# rather than flagged. (Codex-reviewed 2026-07-13: closed the case/apostrophe
+# false-negatives and the historical-ref false-positives.)
+CURRENT_VERSION_CLAIM = re.compile(
+    r"(?:currently at|current(?: version)? is|latest is|"
+    r"scan prompt(?: version)? is|it[‘’']s|scan prompt)\s+(v\d+\.\d+)",
+    re.I,
+)
+# A line carrying one of these is talking about a PAST version on purpose — never
+# a current-version claim. Mirrors the INTENTIONAL exemption used in Check 2.
+HISTORICAL_REF = re.compile(
+    r"\b(added|since|introduced|was|prior|formerly|previously|before)\b", re.I
+)
+
 
 def hand_written_half(claude_md_text):
     """CLAUDE.md content OUTSIDE the SCAN:AUTO markers (the half humans write)."""
@@ -64,6 +87,50 @@ def read(path):
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def scan_version_drift(config):
+    """Watchtower's OWN docs must agree with the scan prompt's header version.
+
+    Returns (canonical_version, findings). Fails open (empty findings) if the
+    canonical version can't be read, so a prompt refactor never breaks the run.
+    """
+    prompts_root = config.get("promptsRoot")
+    if not prompts_root:
+        return None, []
+    canonical_m = SCAN_PROMPT_VERSION.search(read(Path(prompts_root) / "security-scan-prompt.md"))
+    if not canonical_m:
+        return None, []
+    canonical = canonical_m.group(1)
+
+    docs = [
+        ("public README", Path(prompts_root).parent / "README.md"),
+        ("CLAUDE.md runbook", WATCHTOWER_ROOT / "CLAUDE.md"),
+    ]
+    findings = []
+    for label, path in docs:
+        text = read(path)
+        if path.name == "CLAUDE.md":
+            text = hand_written_half(text)  # the SCAN:AUTO block is generated, not a hand-cited claim
+        claimed = set()
+        for line in text.splitlines():
+            if HISTORICAL_REF.search(line):
+                continue  # a deliberate past-version reference, not a current-version claim
+            claimed.update(CURRENT_VERSION_CLAIM.findall(line))
+        for c in sorted(claimed):
+            if c != canonical:
+                findings.append(
+                    f"{label} claims scan prompt {c} but the prompt header is {canonical}"
+                )
+    return canonical, findings
+
+
+def watchtower_self_name(config, portfolio_root):
+    """displayName of the project that IS this Watchtower runtime (for flag routing)."""
+    for proj in config.get("projects", []):
+        if (portfolio_root / proj["folder"]).resolve() == WATCHTOWER_ROOT:
+            return proj["displayName"]
+    return "Watch Tower"
 
 
 SKIP_DIRS = {"node_modules", ".git", ".next", "dist", "build", "out", ".vercel", "coverage"}
@@ -272,6 +339,21 @@ def main():
             print(f"  {proj['displayName']}:")
             for f in findings:
                 print(f"    - {f}")
+
+    # Check 5 (Watchtower-self): the scan prompt's header version is the source
+    # of truth; our own README + runbook must match it. Route any drift onto the
+    # Watch Tower app's own stale-docs flag so it rides the same machinery.
+    try:
+        _canonical, drift = scan_version_drift(config)
+    except Exception as e:  # noqa: BLE001 — fail open; a bad-encoding doc must never break the run
+        print(f"  SKIP version-drift check: {e}", file=sys.stderr)
+        drift = []
+    if drift:
+        self_name = watchtower_self_name(config, portfolio_root)
+        results.setdefault(self_name, []).extend(drift)
+        print(f"  {self_name} (scan-prompt version drift):")
+        for f in drift:
+            print(f"    - {f}")
 
     clean = sum(1 for f in results.values() if not f)
     flagged = len(results) - clean
