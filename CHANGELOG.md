@@ -7,6 +7,20 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-07-15 — v7.3 (`.nvmrc` vs `engines`: a suppressed-flag fix)
+
+A check defeated by its own input selection. STEP 1 and the `outdated-runtime` rule read `.nvmrc` **or** `package.json` engines as interchangeable sources for the Node runtime. They are not: `.nvmrc` is the **local dev toolchain**; `engines.node` (for Firebase, `functions/package.json` engines) is the **deployed runtime**. Where they disagreed, the scan could pick either — and picking `.nvmrc` silently suppressed an `outdated-runtime` flag on a real EOL-bound Node 20 Cloud Functions runtime. The wrong doc line was cosmetic; the missed flag was the actual defect.
+
+### Fixed
+
+- **Three conflation sites** (an initial report found two — the CATEGORY TAXONOMY row was also conflated): the STEP 1 runtime check, the `outdated-runtime` flag rule, and the taxonomy description.
+- **`outdated-runtime` now has exactly one source: the DEPLOYED runtime** — `functions/package.json` `engines.node` when present, else root `package.json` `engines.node`. `.nvmrc` may never be reported as a deployed runtime and **may never clear the flag**.
+- **`claude-md-template.md`** — the Backend row must carry the deployed runtime and never cite `.nvmrc`; when the two majors differ it must state both separately rather than collapse them.
+
+### Added
+
+- **`runtime-declaration-mismatch`** (P4, no OWASP mapping — hygiene) — fires when `.nvmrc` and the deployed `engines.node` declare different Node majors. Surfacing the drift makes this class of miss self-reporting instead of latent: previously a repo whose two files happened to agree reported correctly *by luck* and would start lying the moment they diverged.
+
 ## 2026-06-24 — v7.2 (dependency supply-chain hardening + mass-assignment upgrade)
 
 Borrowed selectively at the methodology level from the public Anthropic-Cybersecurity-Skills corpus — pentest/live techniques (Burp, live targets, "written authorization") were discarded as out of scope for an unattended static sweep; only detection substance that survives as static code review was adopted. No third-party code or skills were installed.

@@ -20,7 +20,7 @@ It does **not** replace per-PR review tools, professional penetration testing, o
 
 | Piece | What it does | Where it lives |
 |---|---|---|
-| Scan prompt | 2,000+ lines of "what to check, what to flag," currently at v7.2 with OWASP Top 10 (2021) categorization, per-app strengths, and silent-failure / memory-growth sweeps | `prompts/security-scan-prompt.md` |
+| Scan prompt | 2,000+ lines of "what to check, what to flag," currently at v7.3 with OWASP Top 10 (2021) categorization, per-app strengths, and silent-failure / memory-growth sweeps | `prompts/security-scan-prompt.md` |
 | Dashboard | Static HTML viewer for flag burndown, OWASP coverage, AI tool intel, and per-app A–F health grades | `index.html` (data populates over time from your scheduled scans) |
 | Helper scripts | Three small Python + Node scripts that parse CLAUDE.md scan blocks, merge results, and generate stats | `scans/` |
 | Scheduled-scan skill | **The thing you download and schedule.** Wires Phases 0 → 0.5 → A → B → B.5 → B.7 → C → D → E into a self-rescheduling loop on whatever cadence you configure (default: every 21 days), pulling the latest scan prompt from this repo on every run | `examples/triweekly-security-scan.SKILL.md.template` |
@@ -35,7 +35,7 @@ Watchtower is three pieces: a **public methodology repo** (this one — the scan
 ```mermaid
 graph TB
     subgraph public["PUBLIC: github.com/galengrimm-code/watchtower (this repo)"]
-        Prompt[Scan Prompt v7.2]
+        Prompt[Scan Prompt v7.3]
         Shell[Dashboard Shell - index.html]
         Scripts[Helper Scripts - Python + Node]
         Template[Skill Template - examples/]

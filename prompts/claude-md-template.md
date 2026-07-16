@@ -14,7 +14,7 @@
 | Layer | Tech |
 |---|---|
 | Frontend | {REQUIRED: framework + version + UI libs} |
-| Backend | {REQUIRED: server framework + runtime, or "None (client-side only)"} |
+| Backend | {REQUIRED: server framework + the **DEPLOYED** runtime, or "None (client-side only)". Source the runtime from `functions/package.json` `engines.node` (Firebase Cloud Functions) or root `package.json` `engines.node` — **never from `.nvmrc`**, which is the local dev toolchain, not a deployed runtime. If `.nvmrc` declares a different major, state the deployed runtime here and note the local toolchain separately (e.g. "Cloud Functions Node 20; local toolchain .nvmrc 22") — do not collapse them into one version.} |
 | Data | {REQUIRED: databases/caches/storage, or "None"} |
 | Auth | {REQUIRED: method, or "None"} |
 | Hosting | {REQUIRED: platform} |

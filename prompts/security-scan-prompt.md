@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.2
+# Security Scan Prompt v7.3
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.3 fixes (2026-07-15) — `.nvmrc` vs `engines` conflation: a suppressed-flag bug, not a typo:**
+- **Root cause:** STEP 1 and the flag rule both read `.nvmrc` **or** `package.json` engines as interchangeable sources for the Node runtime. They are not. `.nvmrc` is the **local dev toolchain**; `engines.node` (and for Firebase, `functions/package.json` engines) is the **deployed runtime**. When they disagree the scan could pick either — and picking `.nvmrc` **silently suppressed an `outdated-runtime` flag on a real EOL-bound Node 20 Cloud Functions runtime**. A check was defeated by its own input selection; the wrong doc line was cosmetic, the missed flag was not.
+- **Fixed in three places** (the original report found two — the taxonomy row was also conflated): the STEP 1 runtime check, the `outdated-runtime` flag rule, and the CATEGORY TAXONOMY description.
+- **New rule:** the **deployed** runtime is the ONLY source for `outdated-runtime` — `functions/package.json` engines when present (Cloud Functions), else root `package.json` engines. **`.nvmrc` may never be reported as a deployed runtime and may never clear the flag.**
+- **New category `runtime-declaration-mismatch` (P4)** — when `.nvmrc` and the deployed `engines.node` declare different majors, surface the drift instead of silently picking one. This is what makes the class of miss self-reporting rather than latent.
+- STEP 3 / `claude-md-template.md`: the Backend row must carry the **deployed** runtime and must never cite `.nvmrc`.
 
 **v7.2 additions (2026-06-24) — dependency supply-chain hardening + mass-assignment upgrade (borrowed selectively at the methodology level from the public Anthropic-Cybersecurity-Skills corpus; pentest/live techniques discarded, only static-scannable detection kept — no third-party code or skills installed):**
 - STEP 1: install-script triage upgraded — the existing `supply-chain-install-scripts` (P3) bullet now escalates to a new **`malicious-install-script` (P1, A08)** category ONLY on a dangerous *combination* (remote fetch + execution, credential read + network exfil, or obfuscation + execution) — a single weak signal (`process.env`, `node -e`, `atob(` alone) stays P3. Emitted INSTEAD OF `supply-chain-install-scripts` for that dependency, never both. Splits real install-time malware out of the benign-install-script noise (~2% of npm packages use install scripts legitimately — the *behavior combination*, not the presence, is the signal).
@@ -105,7 +112,12 @@ Run these commands and include the results:
 - Count total lines of code: `find . -type f \( -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" -o -name "*.css" -o -name "*.html" -o -name "*.json" \) -not -path "*/node_modules/*" -not -path "*/.next/*" -not -path "*/dist/*" -not -path "*/build/*" -not -name "package-lock.json" | xargs wc -l`
 - Map folder structure: `find . -maxdepth 2 -type d -not -path "*/node_modules/*" -not -path "*/.next/*" -not -path "*/dist/*" -not -path "*/.git/*"`
 - Run `npx license-checker --summary --production` and flag any GPL/AGPL/copyleft licenses
-- Check .nvmrc or package.json "engines" for Node.js version and flag if EOL or 2+ major versions behind current LTS
+- Node runtime — **`.nvmrc` and `engines` are NOT interchangeable; never collapse them into one fact:**
+  - **Deployed runtime (the only source for `outdated-runtime`):** if `functions/package.json` exists (Firebase Cloud Functions), its `engines.node` **is** the deployed Cloud Functions runtime — use it, and only it, for any statement about the CF runtime. Otherwise use the root `package.json` `engines.node` (server/host runtime).
+  - **Local toolchain only:** `.nvmrc` is the developer's local Node version. **NEVER report `.nvmrc` as a deployed runtime, and never let a current `.nvmrc` clear the `outdated-runtime` flag.** A repo may legitimately have both; they are separate facts.
+  - FLAG `outdated-runtime` when the **deployed** runtime (per the rule above) is EOL or 2+ major versions behind current LTS — regardless of what `.nvmrc` says.
+  - If both exist and declare **different majors**, also emit `runtime-declaration-mismatch` — the local toolchain and the deploy target have drifted, and any doc derived from the wrong one will lie.
+  - Rationale (v7.3): reading `.nvmrc` as the runtime silently suppressed a real EOL-bound Node 20 Cloud Functions finding. Do not re-merge these two inputs.
 - Check dist/, build/, .next/static/, public/ for accidentally bundled .env files
 - Detect testing infrastructure: check for playwright.config.*, vitest.config.*, jest.config.*, cypress.config.*, *.spec.*, *.test.* files; check package.json devDependencies for @playwright/test, vitest, jest, cypress, @testing-library/*; count test files and note the framework, runner, and approximate test count
 
@@ -1470,7 +1482,8 @@ P3 — Medium:
 - Weak URL validation that could enable SSRF → category: ssrf-risk
 - CDN scripts loaded without SRI integrity hashes → category: cdn-no-sri
 - CDN dependencies loaded with @latest (unpinned) → category: unpinned-cdn
-- Node.js version in .nvmrc or package.json engines is EOL or 2+ major versions behind → category: outdated-runtime
+- DEPLOYED Node.js runtime is EOL or 2+ major versions behind current LTS — sourced from `functions/package.json` engines (Cloud Functions) or root `package.json` engines. **NEVER sourced from `.nvmrc`** (local toolchain only); a current `.nvmrc` must never clear this flag → category: outdated-runtime
+- `.nvmrc` and the deployed `engines.node` declare different Node majors (local toolchain drifted from the deploy target) → category: runtime-declaration-mismatch
 - Debug headers or logging that exposes auth state in production → category: debug-logging
 - Unpinned third-party actions in CI/CD workflows → category: cicd-unpinned-actions
 - No CODEOWNERS protection on CI/CD workflow files → category: cicd-no-codeowners
@@ -1551,7 +1564,8 @@ These are the valid category keys for flags. Every flag must use one of these:
 | stack-trace-leakage | P1 | Error handlers expose internals in production |
 | open-redirect | P1 | User-controlled redirect without validation |
 | exposed-env-in-build | P1 | .env files bundled into dist/build output |
-| outdated-runtime | P3 | Old Node.js version in .nvmrc/engines |
+| outdated-runtime | P3 | DEPLOYED Node runtime (functions/package.json engines for Cloud Functions, else root package.json engines) is EOL or 2+ majors behind LTS. NEVER sourced from .nvmrc — that is the local toolchain and must never clear this flag. (v7.3) |
+| runtime-declaration-mismatch | P4 | `.nvmrc` (local toolchain) and the deployed `engines.node` declare different Node majors — the toolchain and deploy target have drifted; docs derived from the wrong one will lie. (v7.3) |
 | route-protection-gap | P2 | Auth middleware not applied consistently |
 | license-risk | P4 | GPL or restrictive license in dependencies |
 | llm-code-execution | P1 | eval/exec of LLM responses |
@@ -1719,6 +1733,7 @@ Reference: https://owasp.org/Top10/ (© OWASP Foundation, CC BY-SA 4.0)
 | open-redirect-unvalidated | A01 |
 | exposed-env-in-build | A02 |
 | outdated-runtime | A06 |
+| runtime-declaration-mismatch | — |
 | route-protection-gap | A01 |
 | license-risk | — |
 | cdn-no-sri | A08 |
