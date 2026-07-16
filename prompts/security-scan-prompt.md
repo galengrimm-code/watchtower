@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.3
+# Security Scan Prompt v7.4
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.4 additions (2026-07-16) — standards compliance becomes MEASURED, not asserted:**
+- New **STEP 1D: STANDARDS COMPLIANCE** — runs `~/.claude-sync/standards/check-standards.mjs . --json` and pastes the result verbatim into a new top-level `standards` key. **Deterministic script, not LLM judgment.**
+- **Why:** this scan had no standards check at all, yet `data/apps.js` carried LLM-written prose claiming an app "follows NOTIFICATION-STANDARD v0.3" — while that standard's own audit says the app is PARTIAL (missing installation_id, outbox/retry, kill switch). The scan was reporting compliance it never checked, in a file the owner trusts. Prose fields can only ever say nice things; they structurally cannot render a NO.
+- **Hard rule:** standards compliance may ONLY be reported in the `standards` key, from script output. `strengths` / `integrations` and every other prose field must never name a standard or its version.
+- Rules that can't be expressed as assertions are reported as **unknown, never as a pass**. Script unavailable → `standards: null` + `standards-check-unavailable` (P4). An honest null beats a plausible guess.
+- New categories: `standard-violation` (P2; P1 on `commercial` tier), `standard-partial` (P3), `standards-check-unavailable` (P4).
 
 **v7.3 fixes (2026-07-15) — `.nvmrc` vs `engines` conflation: a suppressed-flag bug, not a typo:**
 - **Root cause:** STEP 1 and the flag rule both read `.nvmrc` **or** `package.json` engines as interchangeable sources for the Node runtime. They are not. `.nvmrc` is the **local dev toolchain**; `engines.node` (and for Firebase, `functions/package.json` engines) is the **deployed runtime**. When they disagree the scan could pick either — and picking `.nvmrc` **silently suppressed an `outdated-runtime` flag on a real EOL-bound Node 20 Cloud Functions runtime**. A check was defeated by its own input selection; the wrong doc line was cosmetic, the missed flag was not.
@@ -941,6 +948,62 @@ Note: this is a maintenance-tier flag by design — it doesn't degrade with time
 
 ---
 
+## STEP 1D: STANDARDS COMPLIANCE (v7.4 — RUN THE SCRIPT, DO NOT JUDGE)
+
+Portfolio standards (how we do notifications, PWA/install, auth platform) live in the
+owner's sync repo at `~/.claude-sync/standards/`. Each is a prose contract with a
+machine-readable index at `standards/manifest.json` that expresses its rules as
+grep-checkable assertions.
+
+**Compliance here is MEASURED BY A SCRIPT. You do not read the code and form an opinion.**
+
+**Why this rule exists — read it before you decide to be helpful.** Before v7.4, this scan
+had no standards check at all, yet `data/apps.js` carried lines like *"follows
+NOTIFICATION-STANDARD v0.3"* inside the LLM-written free-prose `integrations` and
+`strengths` fields. That claim was **wrong** — the standard's own audit says that app is
+PARTIAL, missing installation_id, outbox/retry, and the kill switch. A prose field can
+only ever say nice things about what it skimmed; it structurally cannot render a NO. The
+scan was reporting compliance it never checked, in a file the owner would reasonably
+trust. That is worse than reporting nothing. **Never restate, infer, or summarize a
+standards claim in `strengths`, `integrations`, or any prose field — those fields must not
+mention a standard's name or version at all. The `standards` key below is the only place
+compliance may be reported, and only from script output.**
+
+Run, from the project root:
+
+```
+node ~/.claude-sync/standards/check-standards.mjs . --json
+```
+
+- **Paste the `standards` array from `results[0].standards` verbatim** into the `standards`
+  key of the STEP 2 JSON. Do not reword, re-score, upgrade, or "helpfully" reconcile it
+  against what you read in the code.
+- The script decides applicability itself. A standard reported `n/a` means it does not
+  apply to this app — do not score it.
+- Each standard reports `status` (`pass` | `partial` | `fail` | `n/a`), a
+  `passed`/`total` count, per-check `evidence` as `file:line`, and an `unknown` list of
+  rules that are **not mechanically checkable**. Those unknowns are reported as unknown,
+  **never as a pass** — do not fill them in with your own reading.
+- A check marked `confidence: "medium"` that FAILS means *investigate*, not *proven broken*.
+  Carry that nuance into any flag text.
+
+**If the script is missing, errors, or exits 2:** emit `"standards": null` and add ONE flag
+`standards-check-unavailable` (P4) naming the error. **Do NOT substitute your own
+assessment.** An honest null is the correct output; a plausible guess is the bug this
+section exists to prevent.
+
+**Flag emission from script output** (do not double-report — the `standards` key carries
+the detail; flags exist so gaps surface in the normal severity workflow):
+- Any standard with `status: "fail"` → ONE flag `standard-violation` (P2), text naming the
+  standard id + version + the failed P1 check ids, `fix` = the `summary` of the first
+  failed P1 check. Escalate to P1 only when the app's `maintainability.tier` is
+  `commercial`.
+- Any standard with `status: "partial"` → ONE flag `standard-partial` (P3) naming the
+  standard and the failed check ids.
+- `status: "pass"` → no flag. Do not emit a congratulatory flag.
+
+---
+
 ## STEP 2: JSON OUTPUT (primary deliverable)
 
 Output a JSON block in this exact format:
@@ -1134,7 +1197,21 @@ Output a JSON block in this exact format:
     "externalCalls": ["list every external API call and what triggers it"],
     "sharedUtils": ["lib/, utils/, helpers/ files and what they do"],
     "duplication": ["any obvious code duplication across files"]
-  }
+  },
+  "standards": [
+    {
+      "id": "notification",
+      "version": "0.4",
+      "status": "pass|partial|fail|n/a",
+      "passed": 5,
+      "total": 8,
+      "checks": [
+        { "id": "installation-identity", "tenet": "2.1", "severity": "P1", "confidence": "high", "pass": true, "evidence": "src/lib/actions/fcm.ts:28", "summary": "..." }
+      ],
+      "unknown": ["rules that are not mechanically checkable — reported as unknown, NEVER as a pass"]
+    }
+  ],
+  "_standardsNote": "STEP 1D. VERBATIM from `node ~/.claude-sync/standards/check-standards.mjs . --json` (results[0].standards). NEVER hand-authored, re-scored, or inferred from reading the code — that is exactly how apps.js came to claim a PARTIAL app was compliant. null if the script is unavailable."
 }
 
 Rules:
@@ -1143,6 +1220,7 @@ Rules:
 - If something isn't present, use null or []
 - No explanation, just the JSON
 - Every flag MUST be an object with text, severity, category, and confidence fields (see FLAG OUTPUT RULES)
+- `standards` is script output, pasted verbatim (STEP 1D) — it is the ONLY place standards compliance may be stated. Never mention a standard's name or version in `strengths`, `integrations`, or any other prose field.
 
 ---
 
@@ -1484,6 +1562,7 @@ P3 — Medium:
 - CDN dependencies loaded with @latest (unpinned) → category: unpinned-cdn
 - DEPLOYED Node.js runtime is EOL or 2+ major versions behind current LTS — sourced from `functions/package.json` engines (Cloud Functions) or root `package.json` engines. **NEVER sourced from `.nvmrc`** (local toolchain only); a current `.nvmrc` must never clear this flag → category: outdated-runtime
 - `.nvmrc` and the deployed `engines.node` declare different Node majors (local toolchain drifted from the deploy target) → category: runtime-declaration-mismatch
+- A portfolio standard reports `status: "partial"` from STEP 1D's script — non-P1 checks failing → category: standard-partial
 - Debug headers or logging that exposes auth state in production → category: debug-logging
 - Unpinned third-party actions in CI/CD workflows → category: cicd-unpinned-actions
 - No CODEOWNERS protection on CI/CD workflow files → category: cicd-no-codeowners
@@ -1566,6 +1645,9 @@ These are the valid category keys for flags. Every flag must use one of these:
 | exposed-env-in-build | P1 | .env files bundled into dist/build output |
 | outdated-runtime | P3 | DEPLOYED Node runtime (functions/package.json engines for Cloud Functions, else root package.json engines) is EOL or 2+ majors behind LTS. NEVER sourced from .nvmrc — that is the local toolchain and must never clear this flag. (v7.3) |
 | runtime-declaration-mismatch | P4 | `.nvmrc` (local toolchain) and the deployed `engines.node` declare different Node majors — the toolchain and deploy target have drifted; docs derived from the wrong one will lie. (v7.3) |
+| standard-violation | P2 | A portfolio standard FAILS a P1 assertion per STEP 1D's script (`check-standards.mjs`). P1 when the app's maintainability.tier is `commercial`. Script-sourced only — never from reading code. (v7.4) |
+| standard-partial | P3 | A portfolio standard reports `partial` per STEP 1D's script — non-P1 assertions failing. Script-sourced only. (v7.4) |
+| standards-check-unavailable | P4 | `check-standards.mjs` is missing, errored, or exited 2, so compliance is UNKNOWN. An honest null beats a plausible guess — never substitute an LLM assessment. (v7.4) |
 | route-protection-gap | P2 | Auth middleware not applied consistently |
 | license-risk | P4 | GPL or restrictive license in dependencies |
 | llm-code-execution | P1 | eval/exec of LLM responses |

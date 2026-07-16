@@ -7,6 +7,14 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-07-16 — v7.4 (standards compliance: measured, not asserted)
+
+- **New STEP 1D: STANDARDS COMPLIANCE.** Runs `~/.claude-sync/standards/check-standards.mjs . --json` and pastes the result verbatim into a new top-level `standards` key. A deterministic script decides compliance — the model does not read code and form an opinion.
+- **The bug this closes.** The scan had no standards check, yet `data/apps.js` carried LLM-written prose claiming an app "follows NOTIFICATION-STANDARD v0.3" — while that standard's own audit says the app is PARTIAL (no `installation_id`, no outbox/retry, no kill switch). The scan reported compliance it never checked, in a file the owner trusts. A prose field can only ever say nice things about what it skimmed; it structurally cannot render a NO. Wrong-and-confident is worse than absent.
+- **Hard rule:** compliance may be stated ONLY in the `standards` key, only from script output. `strengths`, `integrations`, and every other prose field must never name a standard or its version.
+- **Honest unknowns.** Rules that can't be expressed as grep-checkable assertions are listed in the standard's `not_mechanically_checkable` and reported as unknown — never as a pass. Script missing/errored → `standards: null` + `standards-check-unavailable` (P4), never a substituted guess.
+- **New categories:** `standard-violation` (P2; P1 on `commercial` tier), `standard-partial` (P3), `standards-check-unavailable` (P4).
+
 ## 2026-07-15 — v7.3 (`.nvmrc` vs `engines`: a suppressed-flag fix)
 
 A check defeated by its own input selection. STEP 1 and the `outdated-runtime` rule read `.nvmrc` **or** `package.json` engines as interchangeable sources for the Node runtime. They are not: `.nvmrc` is the **local dev toolchain**; `engines.node` (for Firebase, `functions/package.json` engines) is the **deployed runtime**. Where they disagreed, the scan could pick either — and picking `.nvmrc` silently suppressed an `outdated-runtime` flag on a real EOL-bound Node 20 Cloud Functions runtime. The wrong doc line was cosmetic; the missed flag was the actual defect.
