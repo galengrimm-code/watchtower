@@ -89,6 +89,14 @@ MIRROR_INDEX_DELTA = re.compile(
     r'<title>.*</title>|<h1>\s*Watch\s?[Tt]ower\s*</h1>|<span class="sub"[^>]*>.*?</span>'
 )
 
+# Multi-line blocks the private runtime marks as instance-only (e.g. the idea/to-do
+# board): <!-- RUNTIME-ONLY:START … --> … <!-- RUNTIME-ONLY:END -->. Stripped from
+# BOTH sides before the mirror comparison, so a private runtime feature never reads
+# as drift and never has to be hand-copied to (or stripped from) the public shell.
+RUNTIME_ONLY_BLOCK = re.compile(
+    r'<!--\s*RUNTIME-ONLY:START.*?RUNTIME-ONLY:END\s*-->', re.DOTALL
+)
+
 
 def hand_written_half(claude_md_text):
     """CLAUDE.md content OUTSIDE the SCAN:AUTO markers (the half humans write)."""
@@ -195,8 +203,17 @@ def mirror_drift(config):
     if rt_index.exists() != pub_index.exists():
         findings.append("index.html is present in one repo but missing from the other")
     elif rt_index.exists():
-        rt_body = [ln for ln in norm(rt_index) if not MIRROR_INDEX_DELTA.search(ln)]
-        pub_body = [ln for ln in norm(pub_index) if not MIRROR_INDEX_DELTA.search(ln)]
+        def index_body(path):
+            # Strip RUNTIME-ONLY blocks (private runtime features) from the raw text
+            # first, then mask the known branding lines. Both sides get the same
+            # treatment, so instance-only blocks are invisible to the drift check.
+            text = RUNTIME_ONLY_BLOCK.sub("", read(path))
+            # Drop blank/whitespace-only lines: stripping a RUNTIME-ONLY block leaves
+            # the newlines that surrounded it, and blank-line count is never semantic
+            # HTML drift anyway. A real added line is non-blank and still caught.
+            return [ln for ln in text.splitlines() if ln.strip() and not MIRROR_INDEX_DELTA.search(ln)]
+        rt_body = index_body(rt_index)
+        pub_body = index_body(pub_index)
         if rt_body != pub_body:
             findings.append(
                 "index.html has drifted between the runtime and the public repo "
