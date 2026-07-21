@@ -203,6 +203,19 @@ def mirror_drift(config):
     if rt_index.exists() != pub_index.exists():
         findings.append("index.html is present in one repo but missing from the other")
     elif rt_index.exists():
+        # RUNTIME-ONLY blocks are private to this instance and must NEVER reach the
+        # public repo. Stripping them from BOTH sides (below) hides the legit case
+        # (runtime has them, public doesn't) — but it would ALSO hide a LEAK: a
+        # private block accidentally copied into the public index.html would be
+        # stripped and the compare would read clean. So assert public has none
+        # FIRST — a leak is a finding, not something to silently mask.
+        if RUNTIME_ONLY_BLOCK.search(read(pub_index)):
+            findings.append(
+                "public index.html contains a RUNTIME-ONLY block — a private "
+                "runtime-only feature leaked into the public repo; remove it "
+                "before it ships (the public dashboard is served publicly)"
+            )
+
         def index_body(path):
             # Strip RUNTIME-ONLY blocks (private runtime features) from the raw text
             # first, then mask the known branding lines. Both sides get the same
