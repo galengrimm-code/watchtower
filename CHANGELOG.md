@@ -7,6 +7,44 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-07-30 — v7.5 (dependency-CVE severity by reachability)
+
+- **Dependency CVE severity is now tiered by reachability, not advisory headline.**
+  `npm-cve-critical` / `npm-cve-high` were flat `P1` in the taxonomy. They are now
+  **P1** when reachable in the production tree, **P2** when in the production tree but
+  reachability is disproven by cited evidence, and **P3** when dev/build-only
+  (`npm audit --omit=dev` reports zero). Down-severities require named evidence — the
+  actual `--omit=dev` result, the absent import, the unmet precondition — plus an
+  escalation tripwire naming what would make it P1. An inconclusive trace uses the
+  higher tier.
+- **Why.** The written rule and the practice had silently diverged. Flag history showed
+  P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), P1 only for
+  prod-and-reachable (3) — while the taxonomy table said `P1` for all of them. Agents
+  split on the gap: in the 2026-07-30 cycle four projects down-severitied on reachability
+  and fourteen applied P1 mechanically, and one emitted an `npm-cve-critical` **P1** whose
+  own flag text read *"dev-only — never shipped."* Portfolio P1 count rose roughly 9× from
+  a rubric change rather than a posture change, which buries genuinely new findings and
+  destroys cycle-over-cycle comparability. Severity must describe the scanned app's
+  exposure, not the library's advisory rating.
+- **STEP 1B URL-extraction fallback (blocking).** Before concluding "no URL found", probe
+  `metadataBase`/sitemap targets, `.vercel/repo.json` / `.vercel/project.json`, and any URL
+  recorded by a prior scan — not only `vercel.json` / `CNAME` / `package.json` `homepage`.
+  Two live public sites were recorded as `_Not deployed_` with the entire deployed-surface
+  scan skipped; both returned HTTP 200 when probed. This is the same
+  defeat-by-input-selection class as the v7.3 `.nvmrc`-vs-`engines` bug — a check that
+  silently does not run is indistinguishable from a check that passed.
+- **Added the missing `repo-sync-skipped-dirty` (P4) taxonomy row.** The scan orchestrator
+  injects this category every cycle, but it had no row in the table — so it collided with
+  the "never use a category key outside the taxonomy" rule, and each agent had to resolve
+  the contradiction on its own.
+- **Documented, not fixed:** two `check-standards.mjs` assertions are name-shaped rather
+  than behavior-shaped and err in both directions — a repo whose dataset merely *describes*
+  other apps' notification code scored a false `fail`, and an app with a genuine operator
+  kill switch named `paused` / `isNotificationsPaused` scored a false `kill-switch` fail.
+  Same root cause as the `durable-event-FIRST` assertion removed on 2026-07-17. The v7.4
+  discipline still holds: paste script output verbatim, put any doubt in a separate
+  adjudication section, never re-score.
+
 ## 2026-07-16 — v7.4 (standards compliance: measured, not asserted)
 
 - **New STEP 1D: STANDARDS COMPLIANCE.** Runs `~/.claude-sync/standards/check-standards.mjs . --json` and pastes the result verbatim into a new top-level `standards` key. A deterministic script decides compliance — the model does not read code and form an opinion.

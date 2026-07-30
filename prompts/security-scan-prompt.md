@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.4
+# Security Scan Prompt v7.5
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.5 fixes (2026-07-30) — severity must describe THIS app's exposure, not the advisory's headline:**
+- **Dependency CVE reachability tiers (BLOCKING).** `npm-cve-critical` / `npm-cve-high` are no longer flat P1. Severity is now assigned by reachability: **P1** reachable in the production tree, **P2** in the production tree but reachability disproven by cited evidence, **P3** dev/build-only (`npm audit --omit=dev` clean). Down-severities require named evidence and an escalation tripwire; an inconclusive trace uses the higher tier. See the rule in SECURITY FLAG RULES.
+- **Why:** the taxonomy said `npm-cve-high | P1` flatly, while actual portfolio practice was P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), and P1 only for prod-and-reachable (3). The written rule and the practice disagreed, so agents split — on the 2026-07-30 cycle four projects down-severitied on reachability while fourteen applied P1 mechanically, and one emitted an `npm-cve-critical` **P1** whose own flag text read *"dev-only — never shipped."* Portfolio P1 rose ~9× from a rubric change rather than a posture change, burying the genuinely new findings and destroying cycle-over-cycle comparability.
+- **STEP 1B URL-extraction fallback (BLOCKING).** Before concluding "no URL found", probe `metadataBase`/sitemap targets, `.vercel/repo.json`, and prior-scan-recorded URLs — not just `vercel.json`/`CNAME`/`homepage`. Two live public sites were recorded as `_Not deployed_` with STEP 1B skipped entirely; both answered HTTP 200 when probed. Same defeat-by-input-selection class as the v7.3 `.nvmrc` bug.
+- **Added the missing `repo-sync-skipped-dirty` (P4) taxonomy row.** The orchestrator injects this key every cycle, but it was absent from the table — so it collided with the "never use a category key outside the taxonomy" rule and every agent had to resolve the contradiction itself.
+- **Known limitation, not fixed here:** two `check-standards.mjs` assertions are name-shaped rather than behavior-shaped and err in both directions — a repo whose dataset merely *describes* other apps' notification code scored a false `fail`, and an app with a real operator kill switch named `paused`/`isNotificationsPaused` scored a false `kill-switch` fail. Same root cause as the `durable-event-FIRST` assertion removed 2026-07-17. Keep pasting script output verbatim and put any doubt in a separate adjudication section — never re-score.
 
 **v7.4 additions (2026-07-16) — standards compliance becomes MEASURED, not asserted:**
 - New **STEP 1D: STANDARDS COMPLIANCE** — runs `~/.claude-sync/standards/check-standards.mjs . --json` and pastes the result verbatim into a new top-level `standards` key. **Deterministic script, not LLM judgment.**
@@ -374,6 +381,28 @@ Also extract the deployed URL:
 ## STEP 1B: DEPLOYED SURFACE SCAN (optional — skip if no URL found)
 
 If a production URL was extracted in Step 1, run these checks against the live site using `curl`. If no URL was found, skip this step and set `deployedSurface` to `null` in the JSON output.
+
+**URL EXTRACTION FALLBACK (v7.5, BLOCKING).** Before concluding "no URL found", exhaust these
+candidate sources in order and PROBE any candidate you find — do not skip STEP 1B merely because the
+three canonical config sources are empty:
+
+1. `vercel.json` `alias`/`domains`, a `CNAME` file, `package.json` `homepage` — the canonical three.
+2. **`metadataBase` / `sitemap` / `robots` targets** in `app/layout.*`, `next-sitemap.config.*`, or a
+   generated `sitemap.*` — a Next.js app almost always names its own canonical origin here.
+3. **`.vercel/repo.json` / `.vercel/project.json`** project name → `https://<project>.vercel.app`.
+4. A URL recorded in the project's own `CLAUDE.md` / `SESSION-HANDOFF.md` from a prior scan.
+
+Probe each candidate with `curl -sI`. Treat a **2xx/3xx response whose body or headers identify this
+app** as a confirmed deployment, run the full STEP 1B against it, and record where the URL came from
+in `deployedSurface.url` provenance. Only after every candidate 404s/NXDOMAINs may you set
+`deployedSurface: null`.
+
+**Why:** on the 2026-07-30 cycle two live public sites — `precisionfarms-website` and `pew-planner`
+— were recorded by prior scans as `_Not deployed_` with STEP 1B skipped entirely, because the three
+canonical sources were empty. Both answered HTTP 200 when probed via `metadataBase` and
+`.vercel/repo.json` respectively. This is the same defeat-by-input-selection class as the v7.3
+`.nvmrc`-vs-`engines` bug: a check that silently does not run reports as a clean check, and
+"not deployed" is asserted about a live public surface.
 
 ### HTTP Security Headers (verify deployed state)
 Run `curl -sI <URL>` and check the response headers for:
@@ -1498,8 +1527,42 @@ P1 — Critical:
 - Firebase/Supabase security rules that are too permissive (e.g. allow all reads/writes) → category: permissive-rules
 - Secrets found in git history (.env files, API keys, passwords committed in past commits even if later deleted) → category: secrets-in-git
 - .env files tracked by git (not .env.example/.env.sample/.env.template) — these contain real secrets in the repo → category: env-tracked-by-git
-- Known critical CVEs from npm audit → category: npm-cve-critical
-- Known high severity CVEs from npm audit → category: npm-cve-high
+- Known critical CVEs from npm audit → category: npm-cve-critical — **severity by REACHABILITY, see the rule below**
+- Known high severity CVEs from npm audit → category: npm-cve-high — **severity by REACHABILITY, see the rule below**
+
+**DEPENDENCY CVE SEVERITY — REACHABILITY TIERS (v7.5, BLOCKING).** Do NOT assign P1 to a
+dependency CVE on advisory severity alone. `npm audit` reports the advisory's severity, which is a
+property of the *library*, not of *this app's exposure*. Determine which tier applies and say which
+one you applied, and why, in the flag text:
+
+| Tier | Condition | Severity |
+|---|---|---|
+| **Reachable production** | In the production tree (`npm audit --omit=dev` still reports it) **AND** the vulnerable code path is actually reachable — the package is imported/executed by shipped code, or the advisory's preconditions match this app's configuration | **P1** |
+| **Unreachable production** | In the production tree, but reachability is disproven by evidence — the module is never imported, the vulnerable API is never called, or the advisory's stated preconditions do not hold here | **P2** |
+| **Dev/build only** | `npm audit --omit=dev` reports zero — the package never ships to the client bundle or the deployed runtime | **P3** |
+
+Rules for applying this:
+- **Cite the evidence.** "Dev-only" requires the actual `npm audit --omit=dev` result. "Unreachable"
+  requires a named check — a grep of the build output, the absent import, or the unmet precondition.
+  An unevidenced claim of unreachability is not a down-severity; when you cannot determine
+  reachability, use the higher tier and say the trace was inconclusive.
+- **Never write a P1 whose own flag text says the CVE cannot reach production.** That
+  self-contradiction is the exact bug this rule exists to prevent.
+- **Record the escalation tripwire** on any P2/P3 down-severity: state the change that would make it
+  P1 (e.g. "escalates to P1 if `firebase/database` is ever imported"). A down-severity without a
+  tripwire is a finding that silently stops being tracked.
+- One flag per severity tier per project — group the advisories, do not emit one flag per CVE.
+- This rule governs `npm-cve-critical` and `npm-cve-high` only. `npm-cve-moderate` stays P4.
+
+**Why this rule exists (do not "simplify" it back).** Before v7.5 the taxonomy read
+`npm-cve-high | P1` flatly, while actual portfolio practice — visible in the flag history — was
+P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), and P1 only for prod-and-reachable
+(3). The written rule and the practice disagreed, so agents split: on the 2026-07-30 cycle, four
+projects down-severitied on reachability while fourteen applied P1 mechanically, and one emitted a
+`npm-cve-critical` **P1** whose own text read *"dev-only — never shipped."* The result was a
+portfolio P1 count that rose ~9× from a rubric change rather than a posture change, which destroys
+cycle-over-cycle comparability and buries the real findings. Severity must describe THIS app's
+exposure, not the advisory's headline.
 - Public repo with hardcoded secrets or credentials in source code → category: public-repo-secrets
 - Admin credentials passed via query parameters → category: admin-creds-querystring
 - SQL injection: raw SQL queries without parameterization (e.g. string concatenation in queries) → category: sql-injection
@@ -1612,9 +1675,10 @@ These are the valid category keys for flags. Every flag must use one of these:
 | no-rate-limiting | P3 | No rate limiting on public API routes |
 | no-input-validation | P3 | No validation on user-submitted data |
 | source-maps-exposed | P3 | .map files in production build |
-| npm-cve-critical | P1 | Critical CVE from npm audit |
-| npm-cve-high | P1 | High CVE from npm audit |
+| npm-cve-critical | P1/P2/P3 | Critical CVE from npm audit — severity by REACHABILITY, see below |
+| npm-cve-high | P1/P2/P3 | High CVE from npm audit — severity by REACHABILITY, see below |
 | npm-cve-moderate | P4 | Moderate CVE from npm audit |
+| repo-sync-skipped-dirty | P4 | Orchestrator-injected: local repo was dirty at scan time, ff-only sync skipped, so the scan read possibly-stale local code |
 | xss-innerhtml | P2 | innerHTML with user input |
 | xss-dangerously | P1 | dangerouslySetInnerHTML with user input |
 | xss-eval | P2 | eval() or new Function() |
