@@ -106,10 +106,13 @@ function parseMetrics(block) {
   const fo = block.match(/Files over 500 lines:[^\n]*\n?([\s\S]*?)(?:\n- |\n\n|$)/i);
   out.filesOver500 = 0;
   out.largest = null;
-  const region = (fo ? fo[0] : "") + block;
+  // Scope STRICTLY to the "Files over 500 lines" region. Appending the whole block
+  // made the regex match flag-text line citations like "actions.ts:116,125", which
+  // comma-strip into a bogus 116125-line file. Only the parenthesized "(1234)" form
+  // that the template actually emits is accepted.
+  const region = fo ? fo[0] : "";
   let best = 0, bestName = null, count = 0;
-  // match "name.ext (1234)" OR "name.ext 1234" OR "name.ext: 1234"; bound 500..200000
-  const re = /([\w./-]+\.[a-zA-Z]{1,5})\s*[(:]?\s*([\d,]{3,})\)?/g;
+  const re = /([\w()./-]+\.[a-zA-Z]{1,5})\s*\((\d[\d,]*)\)/g;
   let r;
   while ((r = re.exec(region))) {
     const n = parseInt(r[2].replace(/,/g, ""), 10);

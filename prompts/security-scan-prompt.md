@@ -13,6 +13,7 @@ Scan this project and give me a full security audit and code analysis.
 - **Dependency CVE reachability tiers (BLOCKING).** `npm-cve-critical` / `npm-cve-high` are no longer flat P1. Severity is now assigned by reachability: **P1** reachable in the production tree, **P2** in the production tree but reachability disproven by cited evidence, **P3** dev/build-only (`npm audit --omit=dev` clean). Down-severities require named evidence and an escalation tripwire; an inconclusive trace uses the higher tier. See the rule in SECURITY FLAG RULES.
 - **Why:** the taxonomy said `npm-cve-high | P1` flatly, while actual portfolio practice was P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), and P1 only for prod-and-reachable (3). The written rule and the practice disagreed, so agents split — on the 2026-07-30 cycle four projects down-severitied on reachability while fourteen applied P1 mechanically, and one emitted an `npm-cve-critical` **P1** whose own flag text read *"dev-only — never shipped."* Portfolio P1 rose ~9× from a rubric change rather than a posture change, burying the genuinely new findings and destroying cycle-over-cycle comparability.
 - **STEP 1B URL-extraction fallback (BLOCKING).** Before concluding "no URL found", probe `metadataBase`/sitemap targets, `.vercel/repo.json`, and prior-scan-recorded URLs — not just `vercel.json`/`CNAME`/`homepage`. Two live public sites were recorded as `_Not deployed_` with STEP 1B skipped entirely; both answered HTTP 200 when probed. Same defeat-by-input-selection class as the v7.3 `.nvmrc` bug.
+- **`static-admin-bearer` severity by CALLER MODEL (BLOCKING).** Was flat-critical, so a VPS-to-Vercel cron with a high-entropy secret scored the same as an `/api/admin/*` route in `PUBLIC_PATHS` returning every customer's records. Now P1 human-reachable or cross-tenant, P2 machine-only but mutating/data-returning, P3 machine-only and inert. "Machine-only" requires cited evidence (cron declaration, platform header check, calling service) — a high-entropy secret does NOT lower the tier by itself, and the rationalization traps still govern whether it fires at all.
 - **Added the missing `repo-sync-skipped-dirty` (P4) taxonomy row.** The orchestrator injects this key every cycle, but it was absent from the table — so it collided with the "never use a category key outside the taxonomy" rule and every agent had to resolve the contradiction itself.
 - **Known limitation, not fixed here:** two `check-standards.mjs` assertions are name-shaped rather than behavior-shaped and err in both directions — a repo whose dataset merely *describes* other apps' notification code scored a false `fail`, and an app with a real operator kill switch named `paused`/`isNotificationsPaused` scored a false `kill-switch` fail. Same root cause as the `durable-event-FIRST` assertion removed 2026-07-17. Keep pasting script output verbatim and put any doubt in a separate adjudication section — never re-score.
 
@@ -294,6 +295,37 @@ Run these commands and include the results:
   - FLAG critical when a static-env compare is the sole gate on privileged operations (cross-tenant reads/writes, admin actions, cron jobs that mutate data). Sub-check: note whether the comparison is timing-unsafe (`===`, `Array.includes(token)`, `==`) rather than `crypto.timingSafeEqual` — call it out in the flag text.
   - Guard (do NOT flag): the static secret is defense-in-depth ON TOP of a real session/role check; OR it gates a genuinely non-sensitive endpoint (single-tenant, no data exposure, no state mutation — e.g. a health ping).
   - ⚠ RATIONALIZATION TRAP: "the compare uses `crypto.timingSafeEqual`, so it's fine" and "admin endpoints are an appropriate use case, so non-sensitive" are BOTH wrong. A timing-safe compare that is the *sole* gate still FIRES — the flaw is the shared static secret, not the comparison. And any route that reads or writes more than one tenant's data is NEVER "non-sensitive": cross-org reads (every customer's records/feedback/error-logs at one endpoint), admin consoles, and data-mutating crons all FIRE when a static env bearer is the only gate, regardless of timing-safety. Only a genuinely single-tenant, side-effect-free endpoint is exempt.
+  - **SEVERITY BY CALLER MODEL (v7.5, BLOCKING).** The check above decides IF it fires. This
+    decides HOW LOUD. Severity keys on **what the secret gates and who can reach it** — never on
+    how the secret is compared. State which tier you applied and the evidence, in the flag text:
+
+    | Tier | Condition | Severity |
+    |---|---|---|
+    | **Human-reachable or cross-tenant** | A browser/human can reach the route (it is in a public-paths list, linked from a UI, or has no session layer beneath it), **or** it reads/writes more than one tenant's data | **P1** |
+    | **Machine-to-machine, consequential** | Caller is provably a platform cron or a specific server — not browser-reachable — but the route mutates state or returns data | **P2** |
+    | **Machine-to-machine, inert** | Same, and the route neither mutates nor returns data (health ping, warmup) | **P3** |
+
+    Rules for applying this:
+    - **"Machine-only" needs evidence, not assumption.** Cite the platform cron declaration
+      (`vercel.json` `crons`, a scheduler config), a platform-injected header check
+      (`x-vercel-cron`), or the calling service. A route that merely *looks* internal because of
+      its path is NOT machine-only. No evidence → treat as human-reachable (P1).
+    - **A high-entropy secret does not lower the tier by itself.** It makes guessing infeasible;
+      it does nothing about leak-and-replay, which is the actual threat, and nothing about the
+      missing per-caller identity and audit trail.
+    - Down-tiering to P2/P3 requires an **escalation tripwire** in the flag text: what change
+      makes it P1 (e.g. "escalates to P1 if this route is ever linked from the admin UI").
+    - The RATIONALIZATION TRAP above still governs whether it fires at all. This tier is applied
+      AFTER the check fires — it is not a fourth exemption.
+
+    **Why this exists.** Before v7.5 this category was flat-critical, so a VPS→Vercel cron with a
+    high-entropy secret and an `/api/admin/*` route sitting in `PUBLIC_PATHS` that returns every
+    customer's org, user and feedback records scored identically. On the 2026-07-30 cycle it fired
+    P1 in six apps and the owner's own code review correctly rejected the severity on the
+    machine-to-machine ones while confirming it on the human-reachable one. Same failure shape as
+    the flat `npm-cve-high | P1` rule this version also fixes: a severity that describes the
+    *mechanism* instead of the *exposure*.
+
   - Text: "Privileged route {file:line} is gated only by a static `{ENV_VAR}` bearer{, compared with a timing-unsafe `===`}. A single shared secret protects {what it gates}; if it leaks, all of it is exposed. No per-user admin identity or audit trail."
   - Fix: move to per-admin identity (OIDC/JWT with a role claim) or per-admin DB-stored API keys with audit logging; rotate the shared secret; use `crypto.timingSafeEqual` for any remaining secret compare.
 
@@ -1796,7 +1828,7 @@ These are the valid category keys for flags. Every flag must use one of these:
 | unsigned-tenant-binding | critical | Org/tenant/owner id decoded from an unsigned client source (base64 blob, OAuth state, unverified JWT, cookie) and used to target a DB write — forgeable cross-tenant write. (v7.1) |
 | oauth-state-not-verified | critical | OAuth callback exchanges `code` without verifying `state` against a stored value — login-CSRF / code injection. Library-delegated flows (supabase-js, NextAuth, passport) exempt. (v7.1) |
 | oauth-pkce-missing | P4 | Advisory: confirmed public OAuth client (secretless token exchange) performs the code flow without PKCE. Confidential clients never flagged. (v7.1) |
-| static-admin-bearer | critical | Privileged/admin/cron route gated solely by a static env-var bearer (no per-user identity); notes timing-unsafe comparison. Critical when it gates cross-tenant or mutating ops. (v7.1) |
+| static-admin-bearer | P1/P2/P3 | Privileged/admin/cron route gated solely by a static env-var bearer (no per-user identity); notes timing-unsafe comparison. Severity by CALLER MODEL, not by the compare: P1 human-reachable or cross-tenant, P2 machine-only but mutating/data-returning, P3 machine-only and inert. (v7.1, tiered v7.5) |
 | csv-formula-injection | moderate | CSV/XLSX export writes user free-text into cells without neutralizing leading `= + - @` — formula executes in Excel/Sheets. Escalates if exports cross org boundaries. (v7.1) |
 | token-in-logs | critical | Log call receives an actual token/secret value or token-bearing object — secrets persist in function/platform logs. (v7.1) |
 | verbose-vendor-logging | moderate | PROVISIONAL (Watch List only): unbounded third-party response body logged wholesale — PII/serials/signed URLs may leak even without a token present. Wobbles run-to-run; pending hybrid script. (v7.1) |

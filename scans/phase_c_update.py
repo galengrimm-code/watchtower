@@ -577,7 +577,29 @@ def js_tech(scan):
     return "{\n" + "\n".join(fields) + "\n    }"
 
 
-def update_app(obj_text, scan, app_name):
+def prior_scan_date(slug):
+    """Newest scan-artifact date for `slug` strictly before SCAN_DATE, or None.
+
+    Sourced from scans/<slug>-<date>.json rather than the apps.js `lastScanned`
+    field, because by the time update_app runs that field has already been
+    overwritten with today's date -- reading it back would always compare equal
+    and the provenance stamp would never fire.
+    """
+    best = None
+    pat = re.compile(r"^" + re.escape(slug) + r"-(\d{4}-\d{2}-\d{2})\.json$")
+    try:
+        names = [q.name for q in SCANS.iterdir()]
+    except OSError:
+        return None
+    for name in names:
+        m = pat.match(name)
+        if m and m.group(1) < SCAN_DATE:
+            if best is None or m.group(1) > best:
+                best = m.group(1)
+    return best
+
+
+def update_app(obj_text, scan, app_name, prior_scanned=None):
     """Update an existing app object literal with scan data.
 
     Updates: lastUpdated, scanVersion, flags (preserve accepted/resolved),
@@ -647,6 +669,36 @@ def update_app(obj_text, scan, app_name):
         loc = find_top_level_field(obj_text, "url")
         if loc and obj_text[loc[1]:loc[2]].strip() == "null":
             obj_text = replace_top_level_field(obj_text, "url", jstr(scan["url"]))
+
+    # 10) STALE-PANEL PROVENANCE.
+    #     securityPosture and dataIntegrity are rendered by index.html as if they were
+    #     current findings, but NOTHING in this pipeline refreshes them: the scan JSONs
+    #     are parsed out of each project's CLAUDE.md SCAN:AUTO markdown, which carries no
+    #     structured posture block, so `scan` never contains these keys and update_app
+    #     never wrote them. They therefore froze at whatever an older pipeline last set,
+    #     with no date attached.
+    #
+    #     Real-world consequence (2026-07-30): Daily Game rendered "innerHTML: 3" while
+    #     that cycle's scan emitted ZERO xss flags and had moved the related accepted risk
+    #     to Resolved -- the 3 were comment matches from an earlier cycle. ACFS rendered
+    #     csp: "missing" against a deployed CSP verified byte-identical to source. Both
+    #     read as live findings with no flag behind them, which is worse than a noisy
+    #     flag: there is no text to argue with and no date to distrust.
+    #
+    #     Fix: stamp the panel with the last date it could plausibly have been written
+    #     (the PRIOR lastScanned) whenever this scan did not refresh it. index.html reads
+    #     `postureAsOf` and renders the panel dimmed with a "not refreshed" note, the same
+    #     visual language Archived projects use. Non-destructive -- the data is kept, it
+    #     just stops claiming to be current.
+    for _key in ("securityPosture", "dataIntegrity"):
+        if scan.get(_key):
+            continue  # scan refreshed it -- nothing to stamp
+        if not find_top_level_field(obj_text, _key):
+            continue  # entry has no such panel
+        if prior_scanned and prior_scanned != SCAN_DATE:
+            obj_text = replace_top_level_field(obj_text, "postureAsOf", jstr(prior_scanned))
+        break
+
     return obj_text
 
 
@@ -763,7 +815,7 @@ def main():
         else:
             historical = 0
 
-        new_obj = update_app(obj_text, scan, app_name)
+        new_obj = update_app(obj_text, scan, app_name, prior_scan_date(slug))
 
         # Count active flags after
         flags_idx2 = new_obj.find("flags: [")

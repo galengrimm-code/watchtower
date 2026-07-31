@@ -2145,10 +2145,25 @@ function metricsHTML(metrics) {
   return html;
 }
 
-function securityPostureHTML(posture) {
+function securityPostureHTML(posture, asOf) {
   if (!posture) return '';
 
-  let html = `<div class="env-section"><div class="section-label">Security Posture</div>`;
+  // asOf is set by phase_c_update.py when THIS scan did not refresh the panel.
+  // Nothing in the scan pipeline writes securityPosture/dataIntegrity (the scan JSONs
+  // are parsed from CLAUDE.md markdown, which has no structured posture block), so
+  // without this the panel silently shows values frozen from an earlier cycle -- e.g.
+  // "innerHTML: 3" beside a scan that flagged zero XSS sinks. Dim + date it so it reads
+  // as archival, never as a current finding.
+  const stale = !!asOf;
+  const wrapOpen = stale
+    ? `<div class="env-section" style="opacity:0.55" title="Not refreshed by the latest scan">`
+    : `<div class="env-section">`;
+  let html = wrapOpen + `<div class="section-label">Security Posture`;
+  if (stale) {
+    html += `<span style="margin-left:8px;font-size:9px;color:#e0a030;text-transform:none;letter-spacing:0;font-family:var(--mono)">`
+         + `not refreshed · as of ${escHtml(String(asOf))}</span>`;
+  }
+  html += `</div>`;
   html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">`;
 
   // Headers section
@@ -2698,9 +2713,13 @@ function iconCandidates(app) {
     } else {
       c.push(app.url ? new URL(s, app.url).href : s);
     }
-    if (app.url) {
-      try { c.push('https://icons.duckduckgo.com/ip3/' + new URL(app.url).hostname + '.ico'); } catch (e) {}
-    }
+  }
+  // DDG favicon is a fallback for ANY app with a URL — it used to live inside the
+  // `app.icon` guard, so a newly-added entry that had a real deployed URL but no
+  // harvested icon object produced ZERO candidates and dropped straight to the
+  // placeholder. The fallback never depended on app.icon; the nesting was the bug.
+  if (app.url) {
+    try { c.push('https://icons.duckduckgo.com/ip3/' + new URL(app.url).hostname + '.ico'); } catch (e) {}
   }
   return c;
 }
@@ -2853,7 +2872,7 @@ function renderCard(app, idx) {
       ${techHTML(app.tech || {})}
       ${envHTML(app.envSecrets)}
       ${metricsHTML(app.metrics)}
-      ${securityPostureHTML(app.securityPosture)}
+      ${securityPostureHTML(app.securityPosture, app.postureAsOf)}
       ${deployedSurfaceHTML(app.deployedSurface)}
       ${operationalHealthHTML(app)}
       ${flagsHTML(app.flags, app.scanned, app.name)}
@@ -2916,7 +2935,7 @@ function exportAppPdf(idx) {
     + techHTML(app.tech || {})
     + envHTML(app.envSecrets)
     + metricsHTML(app.metrics)
-    + securityPostureHTML(app.securityPosture)
+    + securityPostureHTML(app.securityPosture, app.postureAsOf)
     + deployedSurfaceHTML(app.deployedSurface)
     + operationalHealthHTML(app)
     + flagsHTML(app.flags, app.scanned, app.name)
