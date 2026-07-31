@@ -36,7 +36,12 @@ function computeBurndown() {
     const date = m[1];
     let scan;
     try { scan = JSON.parse(fs.readFileSync(path.join(SCANS_DIR, f), 'utf8')); }
-    catch { continue; }
+    catch (e) {
+      // A malformed artifact used to vanish from the burndown silently, so the chart
+      // showed a dip that looked like remediation. Say so.
+      console.warn(`[portfolio-stats] SKIPPED unreadable scan artifact ${f}: ${e.message}`);
+      continue;
+    }
     const flags = scan.flags || [];
     if (!byDate[date]) byDate[date] = { P1: 0, P2: 0, P3: 0, P4: 0, projects: 0 };
     byDate[date].projects++;
@@ -123,7 +128,12 @@ function computeFlagAges() {
     const date = m[1];
     let scan;
     try { scan = JSON.parse(fs.readFileSync(path.join(SCANS_DIR, f), 'utf8')); }
-    catch { continue; }
+    catch (e) {
+      // A malformed artifact used to vanish from the burndown silently, so the chart
+      // showed a dip that looked like remediation. Say so.
+      console.warn(`[portfolio-stats] SKIPPED unreadable scan artifact ${f}: ${e.message}`);
+      continue;
+    }
     const appName = scan.app || scan.name || scan.appName;
     if (!appName) continue;
     const flags = scan.flags || [];

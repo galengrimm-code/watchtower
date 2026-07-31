@@ -58,7 +58,11 @@ function git(repo, args) {
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 64 * 1024 * 1024,
     }).toString();
-  } catch {
+  } catch (e) {
+    // Returning "" here makes a failed git invocation indistinguishable from a repo
+    // with no commits -- it reports as ZERO churn in the velocity block. Warn so a
+    // silent zero is attributable.
+    console.warn(`[cycle-stats] git command failed (${args.join(" ")}): ${e.message}`);
     return "";
   }
 }
@@ -128,7 +132,11 @@ function parseMetrics(block) {
 function loadScan(slug, date) {
   const p = path.join(SCANS, `${slug}-${date}.json`);
   if (!fs.existsSync(p)) return null;
-  try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return null; }
+  try { return JSON.parse(fs.readFileSync(p, "utf-8")); }
+  catch (e) {
+    console.warn(`[cycle-stats] unreadable scan ${slug}-${date}.json: ${e.message}`);
+    return null;
+  }
 }
 
 function counts(scan) {

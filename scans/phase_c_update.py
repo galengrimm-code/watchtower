@@ -411,8 +411,51 @@ def parse_flags_array(text):
 
 
 def is_active(entry_text):
-    """An entry is 'active' if it has no `status:` field at the top level."""
-    return not re.search(r"\bstatus:", entry_text)
+    """An entry is 'active' if it has no `status:` KEY at the top level.
+
+    The previous implementation searched for the substring `status:` ANYWHERE in the
+    entry, including inside the flag's own `text` string. The `standard-violation`
+    category quotes the checker verbatim (its text contains a literal status: "fail") from
+    check-standards.mjs` -- so every such flag was misread as historical, PRESERVED on
+    each merge, and the fresh copy appended beside it. Four merge runs on 2026-07-31
+    produced FIVE identical rows on Watch Tower, SlimSquad and Flour & Froth: 12 phantom
+    active flags inflating the portfolio P2 count.
+
+    Same shape as the other prose-vs-structure bugs found that day (comment-matched
+    `innerHTML`, flag-text line citations parsed as file sizes): a regex reading prose
+    as structure. Fix: skip string literals, and only accept `status:` at the entry's
+    own brace depth.
+    """
+    depth = 0
+    i = 0
+    n = len(entry_text)
+    in_str = False
+    quote = None
+    esc = False
+    while i < n:
+        c = entry_text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == quote:
+                in_str = False
+            i += 1
+            continue
+        if c == '"' or c == "'" or c == "`":
+            in_str = True
+            quote = c
+            i += 1
+            continue
+        if c == "{" or c == "[":
+            depth += 1
+        elif c == "}" or c == "]":
+            depth -= 1
+        elif depth == 1 and entry_text.startswith("status:", i):
+            return False
+        i += 1
+    return True
 
 
 def merge_flags(obj_text, new_flags):

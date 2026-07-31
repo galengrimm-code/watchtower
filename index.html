@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<!-- The data/*.js files are rewritten by every scan. Without this the browser
+     serves a cached apps.js and the board renders PRE-merge severities -- observed
+     2026-07-30: a flag re-tiered to P2 on disk still rendered P1 in a warm tab. -->
 <title>Watchtower — Portfolio Observability</title>
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
@@ -1993,7 +1998,7 @@ function renderThreatLandscape() {
         <div style="font-size:10px;color:#555;font-family:var(--mono);margin-top:2px">${cc2.apiKey ? "with API key" : "anon (rate-limited)"}</div>`;
     })()}
     ${intel.scannedAt ? `<div style="margin-top:10px;font-size:11px;color:#555;font-family:var(--mono)">Scanned ${intel.scannedAt}</div>` : `<div style="margin-top:10px;font-size:11px;color:#cca833;font-family:var(--mono)">Run weekly-security-scan to populate</div>`}
-    <div style="margin-top:6px;font-size:10px"><a href="${tdb.sourceUrl || "#"}" style="color:#5b9bd5;text-decoration:none" target="_blank" rel="noopener noreferrer">view threat DB source ↗</a></div>
+    <div style="margin-top:6px;font-size:10px"><a href="${safeHref(tdb.sourceUrl)}" style="color:#5b9bd5;text-decoration:none" target="_blank" rel="noopener noreferrer">view threat DB source ↗</a></div>
   `;
 
   // Active campaigns panel
@@ -2005,11 +2010,11 @@ function renderThreatLandscape() {
       : campaigns.slice(0, 5).map(c => `
         <div style="padding:8px 0;border-bottom:1px solid #1a1a1a">
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;font-weight:600;color:#ddd">
-            <span>${c.name}</span>
+            <span>${escHtml(c.name)}</span>
             ${c.skillsCount ? `<span style="font-family:var(--mono);font-size:11px;color:#ff6666">${c.skillsCount.toLocaleString()} skills</span>` : ""}
           </div>
-          <div style="font-size:11px;color:#888;margin-top:2px">${c.source || ""}${c.date ? ` · ${c.date}` : ""}</div>
-          <div style="font-size:12px;color:#aaa;margin-top:4px;line-height:1.4">${c.summary || ""}</div>
+          <div style="font-size:11px;color:#888;margin-top:2px">${escHtml(c.source || "")}${c.date ? ` · ${escHtml(c.date)}` : ""}</div>
+          <div style="font-size:12px;color:#aaa;margin-top:4px;line-height:1.4">${escHtml(c.summary || "")}</div>
         </div>
       `).join("")
     }
@@ -2024,9 +2029,9 @@ function renderThreatLandscape() {
       <div style="font-size:10px;color:#666;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;font-family:var(--mono)">Top techniques</div>
       ${techs.slice(0, 4).map(t => `
         <div style="padding:6px 0;font-size:12px">
-          <div style="color:#ddd;font-weight:600">${t.id || ""} ${t.name || ""}</div>
-          <div style="color:#999;font-size:11px;margin-top:2px;line-height:1.4">${t.description || ""}</div>
-          ${t.mitigation ? `<div style="color:#88cc88;font-size:11px;margin-top:3px">→ ${t.mitigation}</div>` : ""}
+          <div style="color:#ddd;font-weight:600">${escHtml(t.id || "")} ${escHtml(t.name || "")}</div>
+          <div style="color:#999;font-size:11px;margin-top:2px;line-height:1.4">${escHtml(t.description || "")}</div>
+          ${t.mitigation ? `<div style="color:#88cc88;font-size:11px;margin-top:3px">→ ${escHtml(t.mitigation)}</div>` : ""}
         </div>
       `).join("")}
     ` : `<div style="font-size:13px;color:#777;font-family:var(--mono);padding:8px 0">No technique data</div>`}
@@ -2038,7 +2043,7 @@ function renderThreatLandscape() {
         return `<div style="padding:4px 0;font-size:12px">
           <span style="color:${color};font-family:var(--mono);font-weight:600">${c.id}</span>
           <span style="color:#888;margin-left:6px">${c.component || ""}</span>
-          <div style="color:#aaa;font-size:11px;margin-top:2px">${c.summary || ""}${c.fixedIn ? ` · fixed in ${c.fixedIn}` : ""}</div>
+          <div style="color:#aaa;font-size:11px;margin-top:2px">${escHtml(c.summary || "")}${c.fixedIn ? ` · fixed in ${c.fixedIn}` : ""}</div>
         </div>`;
       }).join("")}
     ` : ""}
@@ -2882,6 +2887,18 @@ function renderCard(app, idx) {
 }
 
 // Minimal HTML-escape for scalar values interpolated into the export report.
+// Threat-DB `sourceUrl` is third-party YAML fetched from a community repo. Escaping
+// alone does NOT make it safe in an href: a `javascript:` URL still executes, and
+// vercel.json permits script-src 'unsafe-inline'. Allow only http/https, else "#".
+function safeHref(u) {
+  if (typeof u !== "string") return "#";
+  try {
+    const parsed = new URL(u, window.location.href);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "#";
+    return escHtml(parsed.href);
+  } catch (e) { return "#"; }
+}
+
 function escHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3181,7 +3198,7 @@ function render() {
           const sev = classifyFlag(f);
           const color = sev === "P1" ? "#ff8888" : sev === "P2" ? "#F97316" : sev === "P3" ? "#EAB308" : "#888";
           const icon = sev === "P1" ? "🔴" : sev === "P2" ? "🟠" : sev === "P3" ? "🟡" : "🔵";
-          return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${getFlagText(f)}</span></div>`;
+          return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${escHtml(getFlagText(f))}</span></div>`;
         }).join("") + `</div>`;
     }
     if (perAppAiFlags.length > 0) {
@@ -3193,7 +3210,7 @@ function render() {
             const sev = classifyFlag(f);
             const color = sev === "P1" ? "#ff8888" : sev === "P2" ? "#F97316" : sev === "P3" ? "#EAB308" : "#888";
             const icon = sev === "P1" ? "🔴" : sev === "P2" ? "🟠" : sev === "P3" ? "🟡" : "🔵";
-            return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${getFlagText(f)}</span></div>`;
+            return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${escHtml(getFlagText(f))}</span></div>`;
           }).join("") + `</div>`;
       }).join("");
     }
@@ -3297,7 +3314,7 @@ function render() {
   document.getElementById("stat-detail-critical").innerHTML = critByApp.length === 0
     ? `<div class="stat-detail-title" style="color:#4caf50">🔴 Critical Flags</div><div style="font-size:13px;color:#4caf50;font-family:var(--mono)">✓ No critical flags</div>`
     : `<div class="stat-detail-title" style="color:#ff6666">🔴 Critical Flags (${critFlags})</div>` +
-      critByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${g.name}</div>${g.flags.map(f => `<div class="stat-detail-flag"><span style="color:#ff4444">⚠</span><span style="color:#ff8888">${getFlagText(f)}</span></div>`).join("")}</div>`).join("");
+      critByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${escHtml(g.name)}</div>${g.flags.map(f => `<div class="stat-detail-flag"><span style="color:#ff4444">⚠</span><span style="color:#ff8888">${escHtml(getFlagText(f))}</span></div>`).join("")}</div>`).join("");
 
   // Build P2 high flags detail panel grouped by app
   const highByApp = [];
@@ -3309,7 +3326,7 @@ function render() {
   document.getElementById("stat-detail-high").innerHTML = highByApp.length === 0
     ? `<div class="stat-detail-title" style="color:#4caf50">🟠 P2 High Flags</div><div style="font-size:13px;color:#4caf50;font-family:var(--mono)">✓ No P2 high flags</div>`
     : `<div class="stat-detail-title" style="color:#F97316">🟠 P2 High Flags (${p2Flags})</div>` +
-      highByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${g.name}</div>${g.flags.map(f => `<div class="stat-detail-flag"><span style="color:#F97316">⚠</span><span style="color:#fb923c">${getFlagText(f)}</span></div>`).join("")}</div>`).join("");
+      highByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${escHtml(g.name)}</div>${g.flags.map(f => `<div class="stat-detail-flag"><span style="color:#F97316">⚠</span><span style="color:#fb923c">${escHtml(getFlagText(f))}</span></div>`).join("")}</div>`).join("");
 
   // Build P3/P4 other flags detail panel grouped by app
   const otherByApp = [];
@@ -3322,12 +3339,12 @@ function render() {
   document.getElementById("stat-detail-other").innerHTML = otherByApp.length === 0
     ? `<div class="stat-detail-title" style="color:#4caf50">🟡 P3/P4 Flags</div><div style="font-size:13px;color:#4caf50;font-family:var(--mono)">✓ No P3/P4 flags</div>`
     : `<div class="stat-detail-title" style="color:#EAB308">🟡 P3/P4 Flags (${otherTotal})</div>` +
-      otherByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${g.name}</div>${g.flags.map(f => {
+      otherByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${escHtml(g.name)}</div>${g.flags.map(f => {
         const sev = classifyFlag(f);
         const color = sev === "P3" ? "#EAB308" : "#9CA3AF";
         const icon = sev === "P3" ? "🟡" : "🔵";
         const label = sev === "P3" ? "P3" : "P4";
-        return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">[${label}] ${getFlagText(f)}</span></div>`;
+        return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">[${label}] ${escHtml(getFlagText(f))}</span></div>`;
       }).join("")}</div>`).join("");
 
   // Build active flags detail panel grouped by app
@@ -3341,11 +3358,11 @@ function render() {
   document.getElementById("stat-detail-active").innerHTML = activeByApp.length === 0
     ? `<div class="stat-detail-title" style="color:#4caf50">⚠ Active Flags</div><div style="font-size:13px;color:#4caf50;font-family:var(--mono)">✓ No active flags</div>`
     : `<div class="stat-detail-title" style="color:#e05555">⚠ Active Flags (${activeTotal})</div>` +
-      activeByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${g.name}</div>${g.flags.map(f => {
+      activeByApp.map(g => `<div class="stat-detail-group"><div class="stat-detail-app">${escHtml(g.name)}</div>${g.flags.map(f => {
         const sev = classifyFlag(f);
         const color = sev === "P1" ? "#ff8888" : sev === "P2" ? "#F97316" : sev === "P3" ? "#EAB308" : "#888";
         const icon = sev === "P1" ? "🔴" : sev === "P2" ? "🟠" : sev === "P3" ? "🟡" : "🔵";
-        return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${getFlagText(f)}</span></div>`;
+        return `<div class="stat-detail-flag"><span>${icon}</span><span style="color:${color}">${escHtml(getFlagText(f))}</span></div>`;
       }).join("")}</div>`).join("");
 
   // Preserve open state after re-render

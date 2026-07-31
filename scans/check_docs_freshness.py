@@ -351,8 +351,14 @@ def check_project(root, today, extra_roots):
                 findings.append(
                     f"SESSION-HANDOFF.md is {behind_days:.0f} days behind the latest commit — it claims to describe current state"
                 )
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            # Swallowing here meant the handoff-staleness check silently DID NOT RUN
+            # and the project still reported clean. A check that cannot run is not a
+            # check that passed -- say so.
+            print(
+                f"  WARN {proj_name}: handoff-freshness check could not run ({e.__class__.__name__}: {e})",
+                file=sys.stderr,
+            )
 
     # 4) Last reviewed: dates older than the window
     for source_name, text in (("README.md", readme), ("CLAUDE.md", claude_hand), ("TECH-DEBT.md", tech_debt)):
