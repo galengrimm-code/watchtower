@@ -7,6 +7,55 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-08-01 — v7.5 continued (SCAN INTEGRITY RULES)
+
+Version deliberately held at v7.5 — same working week, same release. Twelve project
+owners audited a full v7.5 cycle against their own code and reported back. Every rule
+added here comes from a defect found in the SCAN, not in an app.
+
+New **SCAN INTEGRITY RULES** section (I1–I12), placed immediately before FLAG OUTPUT RULES.
+
+- **I1 — never bound severity on an inferred absence.** A scan lowered a storage finding
+  because "there is no UPDATE and no DELETE policy in any of the 31 migrations." The live
+  database carried a permissive DELETE policy present in no migration: any authenticated
+  user could delete any other organization's files. Severity may never rest on a DB-side
+  control not existing unless confirmed against the live catalog. *Presence claims degrade
+  gracefully; absence claims do not.*
+- **I2 — Accepted Risks must survive regeneration.** 212 accept/resolve decisions across 26
+  of 29 projects live inside the block every scan rewrites; their survival depends on an
+  agent remembering an instruction. One is a scope note (*"does not cover xlsx"*) that is
+  the only thing keeping a reachable P1 out of a blanket acceptance. Reproduce every row
+  verbatim including exclusions; never emit an accepted category as active.
+- **I3 — do not damage the repo you are scanning.** Scan commits broke a live
+  revenue-taking app's production deploys twice, leaving it undeployable for ~5.5 days,
+  because the scan writes unpadded markdown into a prettier-gated repo. `[skip ci]` did not
+  prevent the build — it suppressed the notification while the failure happened anyway.
+  Run the repo's own gate before committing; keep table cells short; retire what you replace.
+- **I4 — count root advisories, not affected packages.** One "12 HIGH" was 3; one set of 16
+  traced to a single advisory. `fixAvailable: true` is a claim — verify a patched release
+  exists and is API-compatible. `npm audit fix` took one project 6 high → 20.
+- **I5 — judge a deny list by effective strength.** A 31-entry deny block was called
+  "thorough" while `Bash(node:*)`, `Bash(npx:*)` and `Bash(cat:*)` were allowed, voiding all
+  19 path-based denies. Enumerate allowed interpreters first.
+- **I6 — strip comments before matching.** Four owners independently reported `innerHTML`
+  matched inside comments documenting its avoidance. Generalized: a regex reading prose as
+  structure is this scan's most common defect class.
+- **I7 — score a dimension N/A when the mechanism is absent.** Cookie flags on token-auth
+  apps; a CSP is not a compensating control for a JS-readable session cookie; "present but
+  permissive" is not "absent."
+- **I8 — skipped is not passed.** **I9 — a shared Postgres project is not a shared
+  namespace**; a routine `DROP ... IF EXISTS` would have destroyed a sibling app's
+  76,076-row audit table. **I10 — enumerate every instance, and headline the severe half.**
+- **I11 — two new grep-able classes**, each found in two projects:
+  `auth-gate-fails-open-on-missing-config` (P1 when sole auth boundary) and
+  `auth-matcher-unanchored-exclusion`.
+- **I12** — `VITE_*` exposure by bundling not env presence; React CSSOM is not a CSP
+  dependency; CRLF-only prettier diffs; grep `tests/` before calling code dead; plpgsql
+  state-write-then-raise is dead code; enumerate claude.ai connectors as distinct MCP
+  surfaces; baseline hooks by hash.
+
+2 new categories.
+
 ## 2026-07-30 — v7.5 (dependency-CVE severity by reachability)
 
 - **Dependency CVE severity is now tiered by reachability, not advisory headline.**

