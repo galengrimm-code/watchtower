@@ -693,7 +693,7 @@ must say the value was never inspected:
 | anything else (feature flags, public IDs, URLs, tuning values) | `orphaned-platform-credential` | **P4** — dead config, note and move on |
 
 Validated against a repo with a known answer: 8 platform names vs 121 source-referenced names yielded
-exactly one orphan, `RAPIDAPI_KEY` — a live key unused for ~131 days — with no false positives.
+exactly one orphan — a live third-party API key, unused for ~131 days — with no false positives.
 
 Flag text must say **delete from the platform AND rotate at the issuer** — an unused key is still a
 valid key. If the platform CLI is unavailable or unauthenticated, report `unknown`, never `clean` (I8).
