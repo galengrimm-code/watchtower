@@ -5,9 +5,34 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.5
+# Security Scan Prompt v7.6
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.6 additions (2026-08-13) — the scan's own blind spots, from one project's remediation day:**
+
+Every item below is a class this scan **did not catch, or reported wrongly**, found while remediating a
+single app. Four of the five are credentials or endpoints that outlived the thing that needed them —
+the scan is repo-scoped, and none of them lived in a repo.
+
+- **I13 (BLOCKING): a stale or dirty local clone must SUPPRESS deployed-state findings, not just note them.** `repo-sync-skipped-dirty` already existed as P4, and its own row says the scan "read possibly-stale local code" — but nothing acted on it. STEP 1B kept comparing live production headers against local config. On a clone **17 commits behind origin**, that produced a `deployed-header-mismatch` **P2 for a CSP that had been fixed a month earlier**. The false finding survived two scan cycles and was still being carried as live. A comparison between live production and stale local is not a weak signal; it is not a signal.
+- **Phase 7 could not have caught the one real secret in `~/.claude/`.** Its patterns are vendor-prefix only (`sk-`, `ghp_`, `AKIA`, `xox`, `BEGIN PRIVATE KEY`). The genuine hit was a **36-character UUID bearer token hardcoded inside a permission allow-rule** — matching none of them. It was found by an agent reading the settings file, not by the sweep that exists to find it. Added prefixless-credential patterns.
+- **Deleting a secret from `~/.claude/` does not remediate it.** The same token persisted in **9 `file-history/` snapshots** (97 dirs, 113 MB, months deep) after the rule was removed. Phase 7 now reports history copies alongside the primary hit and states that **rotation is mandatory** — deletion alone is not remediation.
+- **New: orphaned platform credentials.** A live 55-character API key sat in the deploy platform's env for ~131 days, **referenced nowhere in any repo**. Repo-scoped grep structurally cannot see this. Diff platform env key names against keys referenced in source.
+- **New: retired-backend endpoints that were never revoked.** A migrated-away Google Apps Script web app was still deployed `Execute as: Me` / `Who has access: Anyone`, with **unauthenticated read AND write/delete** over a live Sheet — reachable by anyone holding the URL. A sibling app's equivalent held customer names, phones and emails. The scan cannot reach Google Workspace, so this is detected by its **fingerprint in git history** and handed to a human. Do not claim coverage of a platform you cannot query.
+- **Two grep-able classes** from real production defects on the same app: `req.query.X` consumed as a string with no array guard (repeated params parse to an array → HTTP 500, uncached, re-invoked every request), and a CDN-cached serverless route that does not validate its query string (unknown params fork the cache key, bypassing `s-maxage` and re-invoking upstream work on every call).
+- 5 new categories: `orphaned-platform-credential`, `retired-backend-endpoint-live`, `retired-backend-endpoint-unverified`, `query-param-array-crash`, `unvalidated-query-cache-fork`. The `file-history` retention rule extends the existing `ai-config-dangerous` finding rather than adding a key — it is the same secret, with a remediation correction.
+
+**v7.6 corrections applied before release — cross-vendor review (Codex) plus empirical testing of every new snippet:**
+- **The retired-backend check originally scored P1 from a git-history hit alone.** That is the exact inferred-state defect I1 exists to prevent: history proves a string existed, not that anything is deployed, and a repo that correctly removed *and* revoked an endpoint would have scored a critical false positive. Now it **recovers the URL and probes it**, with severity from the response (200 unauthenticated → P1, 401/403 → P2, 404 → clean) and a separate `-unverified` P3 handoff when no probe is possible.
+- **It also originally suppressed on "still referenced in current source."** Tested against the repo that produced the finding: the dead Apps Script URL is still referenced by a completed one-shot migration script, so the rule **would have stayed silent on its own founding case**. A surviving reference from a migration or legacy tool says nothing about whether the endpoint is deployed. Suppression removed.
+- **The env-orphan grep recursed through `node_modules` and build output** — a dependency mentioning the same name made an orphan look referenced (121 apparent references vs 7 real ones on the test repo). Now excluded, scoped to one environment, and the platform-injected exclusion that was described in prose is actually implemented.
+- **A bracket-form extraction used ERE lookahead**, which `grep -E` does not support: it silently matched nothing, which would have dropped every `process.env["X"]` reference and manufactured false orphans. Replaced with a plain uppercase-token match, verified against dot, bracket-double-quote and bracket-single-quote forms.
+- **An env var NAME is not a credential.** Severity is now by name shape (`*_KEY`/`*_SECRET`/`*_TOKEN`/… → P2; feature flags, public IDs and URLs → P4), and the flag text must say the value was never inspected.
+- **`searchParams.get()` was wrongly grouped with `req.query` array crashes.** `URLSearchParams.get()` returns `string | null` and never an array (`getAll()` is the array form) — verified in Node. Including it would have produced pure false positives. Rule now scoped to array-returning parsers only.
+- **The `file-history` count command was prose in a code block**, not runnable. Replaced with an executable procedure that anchors on a non-secret string so the credential never enters argv or shell history.
+- **I13's freshness check counted all dirty files** while the rule spoke about STEP 1B config files; it now gates on `behind`/`unknown upstream`/`dirty config` specifically, and the `repo-sync-skipped-dirty` row was rewritten to cover all three conditions rather than only the original orchestrator-injected dirty case.
+- Both new checks were validated end to end against a repo with a **known answer**: they returned exactly the one real orphaned credential and the one real retired-backend fingerprint, with no false positives.
 
 **v7.5 additions (2026-08-01) — SCAN INTEGRITY RULES, from twelve owner audits of a full v7.5 cycle:**
 - New **SCAN INTEGRITY RULES** section (I1-I12), immediately before FLAG OUTPUT RULES. Every rule comes from a defect found in the SCAN, not in an app. Read it before STEP 1.
@@ -461,6 +486,13 @@ Run `curl -sI <URL>` and check the response headers for:
 
 Compare deployed headers against source code configuration (next.config.js, vercel.json, middleware.ts). Flag mismatches where headers are configured in code but not served in production.
 
+> **GATE (I13, BLOCKING, v7.6).** This comparison reads LOCAL files. Run the freshness check in I13
+> first. If the clone is behind origin, unknown, or dirty in any of those config files, **do not emit
+> `deployed-header-mismatch` or any other source-vs-deployed finding** — emit `repo-sync-skipped-dirty`
+> and record which comparisons were suppressed. A clone 17 commits stale produced a P2 for a CSP that
+> had been fixed a month earlier, and it was carried as live for two cycles. Findings drawn from the
+> live response alone are unaffected.
+
 ### Auth Provider Configuration
 Check the page HTML source (via `curl -s <URL>`) for auth provider scripts:
 
@@ -615,6 +647,110 @@ For each HIT with HTTP 200/206 and non-trivial body:
 Filter out known-OK paths the user has accepted (manually mark `status: "accepted"` in the dashboard).
 
 ---
+
+### Credential & Endpoint Afterlife (v7.6 addition)
+
+**This scan is repo-scoped. Access that outlives the code that needed it does not live in a repo.**
+On the app that produced this section, four separate credentials or endpoints were still live long
+after their purpose ended, and the repo-scoped scan could not see any of them. Both checks below are
+cheap and mechanical.
+
+**A. Orphaned platform credentials.** Compare env var *names* on the deploy platform against names
+referenced anywhere in source. Never print values.
+
+```bash
+# Scope to ONE environment — preview/dev-only vars are not orphans in production.
+vercel env ls production 2>/dev/null | awk 'NR>2 {print $1}' \
+  | grep -E '^[A-Z_][A-Z0-9_]*$' \
+  | grep -vE '^(VERCEL|NX|TURBO|NEXT_RUNTIME)_|^(CI|NODE_ENV|PORT)$' \
+  | sort -u > /tmp/wt_platform_env
+
+# Referenced anywhere in FIRST-PARTY source. Excluding build output and deps is required:
+# a compiled bundle or a dependency mentioning the same name makes an orphan look "used".
+grep -rhoE "(process\.env|import\.meta\.env)(\.[A-Z_][A-Z0-9_]*|\[[\"'][A-Z_][A-Z0-9_]*[\"']\])" \
+  --include="*.js" --include="*.jsx" --include="*.ts" --include="*.tsx" --include="*.mjs" \
+  --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist --exclude-dir=build \
+  --exclude-dir=.vercel --exclude-dir=coverage --exclude-dir=.git . 2>/dev/null \
+  | grep -oE "[A-Z_][A-Z0-9_]{2,}" \
+  | sort -u > /tmp/wt_src_env
+# NOTE: extract with a plain uppercase-token match. `grep -E` is POSIX ERE and does NOT
+# support lookahead — a `(?=...)` form here silently matches nothing, which would drop every
+# bracket-style reference and make a referenced var look orphaned. Verified against
+# process.env.X, process.env["X"], and import.meta.env['X'].
+# Also check non-JS references (CI config, Dockerfile, docs) before concluding "unused":
+grep -rhoE "\b[A-Z_][A-Z0-9_]{3,}\b" .github/ *.yml *.yaml Dockerfile* 2>/dev/null | sort -u >> /tmp/wt_src_env
+sort -u -o /tmp/wt_src_env /tmp/wt_src_env
+
+comm -23 /tmp/wt_platform_env /tmp/wt_src_env    # on the platform, referenced NOWHERE
+```
+
+**A name is not a credential.** This sees names only, so severity is by NAME SHAPE, and the flag text
+must say the value was never inspected:
+
+| Unreferenced name matches | Category | Severity |
+|---|---|---|
+| `*_KEY`, `*_SECRET`, `*_TOKEN`, `*_PASSWORD`, `*_CREDENTIAL`, `*_DSN`, `*_PRIVATE*` | `orphaned-platform-credential` | **P2** |
+| anything else (feature flags, public IDs, URLs, tuning values) | `orphaned-platform-credential` | **P4** — dead config, note and move on |
+
+Validated against a repo with a known answer: 8 platform names vs 121 source-referenced names yielded
+exactly one orphan, `RAPIDAPI_KEY` — a live key unused for ~131 days — with no false positives.
+
+Flag text must say **delete from the platform AND rotate at the issuer** — an unused key is still a
+valid key. If the platform CLI is unavailable or unauthenticated, report `unknown`, never `clean` (I8).
+
+**B. Retired-backend endpoints that were never revoked.** When an app migrates off a backend, the old
+endpoint usually keeps serving. Detect the fingerprint in **git history**, not just the working tree:
+
+```bash
+git log --all -S"script.google.com/macros" --oneline 2>/dev/null | head -5
+git log --all -S"execute-api" --oneline 2>/dev/null | head -5      # API Gateway
+git log --all -S"cloudfunctions.net" --oneline 2>/dev/null | head -5
+git grep -I -l -E "script\.google\.com/macros|/exec\?|cloudfunctions\.net|execute-api" $(git rev-list --all 2>/dev/null | head -50) 2>/dev/null | head -5
+```
+
+A history hit alone proves only that the string **once existed** — never that anything is still
+deployed. Do not name or score it as live on that basis (I1). **Recover the URL and probe it**, which
+turns an inference into a measurement:
+
+```bash
+# Recover candidate URLs from history (values, not just commits)
+git log --all -p -S"script.google.com/macros" 2>/dev/null \
+  | grep -ohE "https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/(exec|dev)" | sort -u
+# Probe each. Do NOT send credentials, and use a read-only path/param if one exists.
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 20 "<recovered-url>"
+```
+
+| Probe result | Category | Severity |
+|---|---|---|
+| **200 / 401 / 403** — something is still deployed and answering | `retired-backend-endpoint-live` | **P1** (200 unauthenticated) / **P2** (401/403 — deployed but gated) |
+| **404 / 410 / NXDOMAIN** — revoked | none | resolved; note it in the scan body |
+| **No URL recoverable, or probe not possible** | `retired-backend-endpoint-unverified` | **P3 handoff** — name the endpoint shape and ask the owner to check the provider console |
+
+Never emit `*-live` without a probe result. A repo that removed **and** revoked an old endpoint is the
+healthy case and must score clean — flagging it P1 on history alone would be exactly the
+inferred-state defect I1 exists to prevent.
+
+> **Do NOT suppress on "still referenced in current source" — that check was tried and failed.**
+> On the repo that produced this rule, the Apps Script URL was still referenced by
+> `scripts/migrate-to-firebase.mjs`, a completed one-shot migration for a backend that no longer
+> exists. A surviving reference from a migration script, a legacy import tool, or a commented-out
+> block says nothing about whether the endpoint is still *deployed* — and that endpoint was live,
+> public, and accepting writes. Suppressing on it would have produced a false negative on the exact
+> case this rule exists for. List current references as **context for the owner**, never as a reason
+> to stay silent.
+
+The cost here is deliberately asymmetric: a spurious handoff costs one console check, while a missed
+one leaves an unauthenticated write endpoint on live data.
+
+Why P1 by default: the instance behind this rule was a Google Apps Script web app, still deployed
+`Execute as: <owner>` / `Who has access: Anyone`, exposing **unauthenticated read and write/delete**
+over a live spreadsheet to anyone holding the URL. A sibling app's equivalent held customer names,
+phones and emails, and a `doGet` routed into the same write handler — so a plain GET could mutate
+records.
+
+> **Do not claim coverage you do not have.** This scan cannot query Google Workspace, AWS, or GCP
+> consoles. It detects the *fingerprint* and hands off. Reporting "no Apps Script exposure found"
+> would be worse than reporting nothing, because it converts a blind spot into a false all-clear (I8).
 
 ## STEP 1C: AI TOOL SUPPLY CHAIN (global — runs ONCE per scan cycle)
 
@@ -817,7 +953,57 @@ grep -rn -E "sk-[a-zA-Z0-9]{20,}|sk-ant-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|AKI
 grep -rln "BEGIN.*PRIVATE KEY" ~/.claude/ .claude/ 2>/dev/null
 ```
 
+**PREFIXLESS CREDENTIALS (v7.6, BLOCKING).** The patterns above are all vendor-prefix shaped, and a
+real P1 walked straight through them: a **36-character UUID bearer token hardcoded inside a permission
+allow-rule** in `settings.local.json`, pre-approving a `curl` against a production endpoint. It matched
+none of `sk-` / `ghp_` / `AKIA` / `xox` / `BEGIN PRIVATE KEY`, and was found only because an agent read
+the settings file directly. A secret with no vendor prefix is still a secret. Run these too:
+
+```bash
+# Auth headers and credential-bearing URLs inside settings/permission rules
+grep -rn -E "Authorization:[[:space:]]*(Bearer|Basic)[[:space:]]+[A-Za-z0-9._~+/=-]{16,}" \
+  ~/.claude/settings*.json ~/.claude/*.json .claude/settings*.json 2>/dev/null
+grep -rn -E "[?&](api_?key|apikey|token|secret|access_token|auth)=[A-Za-z0-9._~+/=-]{16,}" \
+  ~/.claude/settings*.json .claude/settings*.json 2>/dev/null
+# UUID-shaped and long high-entropy literals inside allow/deny rules
+grep -rn -E "\"(Bash|WebFetch)\([^\"]*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" \
+  ~/.claude/settings*.json .claude/settings*.json 2>/dev/null
+```
+
 Each hit → P1 flag, category `ai-config-dangerous`, text includes the file path and the secret pattern type (never include the secret value itself).
+
+**DELETION IS NOT REMEDIATION (v7.6, BLOCKING).** For every Phase 7 hit, also count copies retained by
+Claude Code's own version history, then report them with the finding:
+
+Count copies of **this** secret, not of the class — otherwise the number is meaningless. Prefer a
+**non-secret anchor** that travels with it (the endpoint URL, the env var name, the rule text), so the
+credential itself never enters a command line or a shell history:
+
+```bash
+# PREFERRED — anchor on something adjacent and non-secret
+ANCHOR='budget.example.com/api/send-report'      # or 'CRON_SECRET', or the allow-rule prefix
+printf 'file-history copies: %s\n' "$(grep -rlF "$ANCHOR" ~/.claude/file-history/ 2>/dev/null | wc -l)"
+
+# FALLBACK — only if no anchor exists. Assign, never echo; report the COUNT only.
+SECRET="$(cat)"   # paste the value on stdin, Ctrl-D; keeps it out of argv and shell history
+printf 'file-history copies: %s\n' "$(grep -rlF "$SECRET" ~/.claude/file-history/ 2>/dev/null | wc -l)"
+unset SECRET
+
+du -sh ~/.claude/file-history/ 2>/dev/null
+ls ~/.claude/file-history/ 2>/dev/null | wc -l
+```
+
+Report the count and the directory size. **Never print a matching line, a file path's contents, or the
+value** (the existing Phase 7 rule applies unchanged).
+
+On the app that produced this rule, the token survived in **9 `file-history/` snapshots** (97 dirs,
+113 MB, months deep) after the allow-rule was deleted. `file-history/` is plaintext and readable by any
+skill, hook, or injected instruction, exactly like the file it snapshotted.
+
+The flag text MUST state: **the credential must be ROTATED at its issuer; removing it from the config
+file does not revoke it and does not clear the history copies.** Never mark such a flag Resolved on the
+strength of a deletion — resolution requires evidence the old credential is rejected (e.g. the endpoint
+returning 401 to it).
 
 ### Phase 8: Claude Code version check
 
@@ -1777,6 +1963,51 @@ match too. Latent while those paths 404 — load-bearing the moment a route shar
 
 ---
 
+### I13. A stale or dirty clone SUPPRESSES deployed-state findings — it does not merely annotate them (v7.6)
+
+**Comparing live production against stale local code is not a weak signal. It is not a signal.**
+
+`repo-sync-skipped-dirty` (P4) already existed, and its own taxonomy row says the scan "read
+possibly-stale local code." Nothing acted on it. STEP 1B went on comparing live headers against local
+`vercel.json`. On a clone **17 commits behind origin**, that emitted `deployed-header-mismatch` **P2**
+for a CSP the owner had fixed a month earlier — committed, deployed, and byte-identical in production.
+The finding survived two scan cycles and was still being carried as live when the owner investigated.
+
+Before STEP 1B, establish clone freshness:
+
+```bash
+git fetch origin 2>/dev/null
+BEHIND=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo unknown)
+# Only the config files STEP 1B actually READS can corrupt the comparison.
+DIRTY_CFG=$(git status --porcelain -- \
+  vercel.json next.config.* middleware.* netlify.toml firebase.json _headers public/_headers \
+  2>/dev/null | wc -l)
+echo "behind:       $BEHIND"
+echo "dirty config: $DIRTY_CFG"
+echo "dirty total:  $(git status --porcelain | wc -l)   # context only — does NOT gate on its own"
+```
+
+Suppress when `BEHIND` is greater than 0 **or** `unknown` (no upstream configured — you cannot prove
+freshness), **or** `DIRTY_CFG` is greater than 0. A dirty working tree that touches no STEP 1B config
+file does **not** suppress the comparison.
+
+- **Behind > 0, or unknown, or dirty in a file STEP 1B reads** (`vercel.json`, `next.config.*`,
+  `middleware.*`, `netlify.toml`, `firebase.json`, `_headers`) → **DO NOT emit any
+  source-vs-deployed comparison finding.** That includes `deployed-header-mismatch`, CSP drift, and
+  any "configured in code but not served" claim. Emit `repo-sync-skipped-dirty` and state plainly in
+  the deployed-surface section which comparisons were **suppressed and why**.
+- Findings from the **live response alone** (a missing HSTS header, a wildcard `Access-Control-Allow-Origin`,
+  a 200 on an exposed path) remain valid — they do not read local files, so staleness cannot corrupt them.
+  Suppress the *comparison*, not the whole step.
+- A suppressed comparison is **not** a pass (see I8) and **not** a resolution. Never move an existing
+  mismatch flag to Resolved on a stale clone; leave it active and unverified.
+- If the orchestrator can sync cleanly, **prefer syncing over suppressing.** Suppression is the
+  fallback, not the goal.
+
+Generalization: any check that compares **repo state to live state** inherits the repo's freshness.
+Treat clone freshness as a precondition of that whole class, the same way I1 treats live-catalog
+confirmation as a precondition for absence claims.
+
 ## FLAG OUTPUT RULES
 
 Every flag MUST be a structured object:
@@ -1889,6 +2120,8 @@ P2 — High:
 - Deployed headers mismatch: security headers configured in source code (next.config.js, vercel.json, middleware) but not served in production responses → category: deployed-header-mismatch
 
 P3 — Medium:
+- `req.query.X` consumed as a string with no array guard, on a parser that turns repeated params into an array (`?a=1&a=2` → `["1","2"]`) — `(req.query.x || "").toUpperCase()` then throws → category: query-param-array-crash. **Verified in production:** returned HTTP 500 `FUNCTION_INVOCATION_FAILED`, and a 500 is not cached, so it re-invoked the function on every request. Escalate to **P2** when the crashing route performs upstream work or is publicly reachable. **Scope this rule to array-returning parsers only** — Next.js Pages-router `req.query`, Express with `qs`, and equivalents. **Do NOT flag `URLSearchParams.get()`**: it returns `string | null` and never an array on repeated params (`getAll()` is the array form), so including it produces pure false positives. (v7.6)
+- CDN-cached serverless route (sets `s-maxage` / `Cache-Control: public`) that does not validate its query string → category: unvalidated-query-cache-fork. The edge cache is keyed on the FULL URL, so `?cb=1`, `?cb=2`, … each mint a new cache entry, bypass the cache entirely, and re-invoke the function. Measured: identical URLs returned `X-Vercel-Cache: HIT`, any added param `MISS` every time — at 5 paid upstream API calls per miss on one route and a third-party HTML scrape on another. **An origin allowlist does not mitigate this** (`Origin` is a request header any non-browser client sets), and neither does an in-memory rate limiter (see `serverless-memory-state`). Escalate to **P2** when a miss costs paid quota or hits a third party from your domain. (v7.6)
 - No rate limiting on public API routes → category: no-rate-limiting
 - In-memory rate limiters, caches, or session stores (Map, Set, module-level variables) on serverless platforms (Vercel, Netlify, AWS Lambda, Cloud Functions) that reset on every cold start → category: serverless-memory-state
 - catch/except blocks that neither log, rethrow, nor surface the error (empty catch, `except: pass`) → category: swallowed-exception (escalate to P2 when wrapping auth, payment, webhook, or data-write paths)
@@ -1964,7 +2197,12 @@ These are the valid category keys for flags. Every flag must use one of these:
 | npm-cve-moderate | P4 | Moderate CVE from npm audit |
 | auth-gate-fails-open-on-missing-config | P1/P2 | Auth boundary returns a PASS value when its own env/config is missing (`if (!url||!key) return next()`); P1 when that file is the sole auth gate. Fail closed in production. (v7.5) |
 | auth-matcher-unanchored-exclusion | P2/P1 | Middleware/proxy matcher negative-lookahead entry lacking `$` or a `/` boundary, so it prefix-matches (`favicon.ico` also excludes `/favicon.ico.bak`); P1 if the matcher is the only auth boundary. (v7.5) |
-| repo-sync-skipped-dirty | P4 | Orchestrator-injected: local repo was dirty at scan time, ff-only sync skipped, so the scan read possibly-stale local code |
+| repo-sync-skipped-dirty | P4 | The scan read possibly-stale local code. Emit when the clone is **behind origin**, its upstream is **unknown**, **or** a STEP 1B config file is dirty — not only the original orchestrator-injected dirty case. **v7.6: this key now SUPPRESSES source-vs-deployed comparisons (I13), it does not merely annotate them.** Flag text must state which condition fired and which comparisons were suppressed |
+| orphaned-platform-credential | P2 | Env var present on the deploy platform but referenced nowhere in source — a live credential with no consumer. Remediation is delete AND rotate; an unused key is still a valid key (v7.6) |
+| retired-backend-endpoint-live | P1/P2 | A backend the app migrated away from, **confirmed still answering by an HTTP probe**. P1 when it responds 200 unauthenticated; P2 when it responds 401/403 (deployed but gated). Never assign from git history alone — history proves the string existed, not that anything is deployed (I1) (v7.6) |
+| retired-backend-endpoint-unverified | P3 | Retired-backend fingerprint found in git history, but no URL was recoverable or no probe was possible. A HANDOFF: name the endpoint shape and ask the owner to check the provider console. This scan cannot query Google Workspace / AWS / GCP consoles (v7.6) |
+| query-param-array-crash | P3/P2 | `req.query.X` used as a string with no array guard; repeated params parse to an array and throw an unhandled 500. P2 when the route does upstream work or is publicly reachable (v7.6) |
+| unvalidated-query-cache-fork | P3/P2 | CDN-cached serverless route that does not validate its query string, so unknown params fork the cache key and bypass `s-maxage`. P2 when a miss costs paid quota or hits a third party (v7.6) |
 | xss-innerhtml | P2 | innerHTML with user input |
 | xss-dangerously | P1 | dangerouslySetInnerHTML with user input |
 | xss-eval | P2 | eval() or new Function() |
