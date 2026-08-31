@@ -44,6 +44,11 @@ the scan is repo-scoped, and none of them lived in a repo.
 - **I6 strip comments before matching** — four owners reported `innerHTML` matched inside comments saying the code avoids it. A regex reading prose as structure is this scan's most common defect.
 - **I7 score a dimension N/A when the mechanism is absent** (cookie flags on token-auth apps); a CSP is not a compensating control for a JS-readable session cookie; "present but permissive" is not "absent."
 - **I8 skipped is not passed** · **I9 shared Postgres project is not a shared namespace** (a routine `DROP ... IF EXISTS` would have destroyed a sibling app's 76k-row audit table) · **I10 enumerate every instance and headline the severe half** · **I11 two new grep-able classes** (`auth-gate-fails-open-on-missing-config`, `auth-matcher-unanchored-exclusion`) · **I12 assorted owner corrections**.
+- **I14 an amplifier written inside another finding vanishes when that finding is fixed** — open/unverified signup was a clause in a P1 description, not its own row; give preconditions their own flag.
+- **I15 a shared-project advisor is not automatically the scanned repo's finding** — confirm the repo exercises the feature before attributing it.
+- **I16 follow a shared resource to its consumers, usually in another repo** — client-side filtering is presentation, never authorization.
+- **I17 read the control flow before scoring a weak control** (OAuth-then-PIN is not PIN-as-perimeter), and re-derive static summary facts each scan.
+- **I18 a `FOR ALL` policy with no `WITH CHECK` uses `USING` as its write check** — enumerate them all; a row-scoped write policy can still let a caller set `is_admin` on their own row. Trace every auth helper back to the write policy on the table it reads.
 - 2 new categories. Version deliberately held at v7.5 — same working week, same release.
 
 **v7.5 fixes (2026-07-30) — severity must describe THIS app's exposure, not the advisory's headline:**
@@ -2796,6 +2801,121 @@ Generate project-specific guardrails from scan flags:
 - No .prettierrc or prettier config in package.json → do NOT emit formatting-inconsistency (we only flag failing checks against an intended style, not absence of one). Note `prettierConfigFound: false` in the metrics instead.
 - P1/P2 flags with exploit text → include the exploit scenario in the Active Flags table description
 - Flags with confidence below 0.8 → list under a 'Watch List' subsection instead of Active Flags
+
+### I14. An amplifier written INSIDE another finding vanishes when that finding is fixed (v7.7)
+
+Farm-Budget's P1 storage finding carried this clause in its own description: "Self-serve signup on
+this Supabase project is OPEN and unverified (`disable_signup:false`, `mailer_autoconfirm:true`), so
+anyone on the internet can mint an `authenticated` JWT." That sentence is what turned a
+cross-landlord leak into an internet-facing one. It was **not** a flag of its own.
+
+Verified live again on 2026-08-31 (`/auth/v1/settings`): still `disable_signup:false`,
+`mailer_autoconfirm:true`, `email:true`. The P1 it was attached to is now fixed. So on the next scan
+the amplifier disappears from the report entirely — while still applying to every other table,
+bucket and RPC on a Postgres project shared by Farm-Budget, farm-fin, Landowner-Portal and the
+`parts` schema.
+
+**Rule:** a precondition that raises the severity of a finding is a finding. Open/unverified signup,
+a disabled email-confirmation step, a permissive default role — each gets its OWN row with its own
+severity, and each is re-verified independently of whatever it was first noticed next to. Never let
+the fix for finding A silently retire the evidence for condition B.
+
+### I15. A shared-project advisor is not automatically a finding for the repo you are scanning (v7.7)
+
+`auth_leaked_password_protection` was reported against Farm-Budget at P2. Farm-Budget has no password
+auth path at all — `src/App.jsx:1658` is `signInWithOAuth`, and there is no `signInWithPassword`,
+`signUp` or password-reset call anywhere in the repo. The project has 2 password users; they belong
+to a sibling app on the same database.
+
+A Supabase advisor is a **project** fact. The scan reported it as a **repo** fact. It has been
+carried against the wrong app for cycles, which means it is both noise here and invisible wherever it
+actually applies.
+
+**Rule:** before attributing a project-level advisor to a repo, confirm that repo exercises the
+feature. If it does not, name the project and say which sibling app owns it — or emit it once at
+project scope. Same discipline as I9: a shared Postgres project is not a shared namespace, and it is
+not a shared blame surface either.
+
+### I16. Follow a shared resource to its CONSUMERS — they are usually in another repo (v7.7)
+
+The scan read the `documents` bucket policy, correctly called it unscoped, and stopped. It never
+asked the next question: *who reads this bucket, and what scopes them?*
+
+The answer was in a different repository. `Landowner-Portal/src/hooks/useFarmData.js` filters
+documents **in the browser** and hands them to `YieldMapsDocuments.jsx`, which calls
+`createSignedUrl` client-side. The storage policy was therefore the only server-side boundary, and a
+bare `bucket_id = 'documents'` also governs `list()` — so any authenticated user could enumerate the
+bucket and mint a URL for anything in it.
+
+**Rule:** for every shared resource (a storage bucket, a table, an RPC) that a scanned repo does not
+solely own, enumerate its consumers across the portfolio before scoring the policy. And treat
+client-side filtering as **presentation, never authorization** — if the only thing separating tenant
+A from tenant B is a `.filter()` in a React hook, that is a P1 regardless of how tidy the UI is.
+
+### I17. Read the control FLOW before scoring a weak control, and re-derive static facts each scan (v7.7)
+
+Two calibration errors in the same report:
+
+**Gate order.** The 4-digit PIN was scored P2 `weak-auth` with the reasoning that it is client-side
+and forgeable. Both true. But the report read as though the PIN were the perimeter. It is not:
+`src/App.jsx:12809` returns the Google sign-in screen (`if (!auth.user)`) and the PIN gate is not
+reached until `:12876` (`if (!pinOk)`). The order is OAuth **then** PIN — a deliberate two-prong
+login. The honest finding is much narrower: the PIN adds nothing against an attacker who already
+holds a valid Google session, and its real value is casual access on an unlocked device.
+
+**Stale static facts.** The report's summary line read "Upload: PDF only, 10 MB limit." The actual
+allow-list is PDF, CSV **and** XLSX, with a macro-workbook rejection path
+(`src/lib/uploadTypes.js:34-38`, `:92`). Flags built on a stale premise inherit the staleness.
+
+**Rule:** when a control looks weak, trace the surrounding control flow and state its position in the
+chain before assigning severity — "weak control layered behind a strong one" and "weak control
+standing alone" are different findings. And re-derive the summary facts from source every scan
+rather than carrying the previous cycle's prose forward.
+
+
+### I18. A `FOR ALL` policy with no `WITH CHECK` uses `USING` as its write check — grep this on every project (v7.7)
+
+Missed by every scan of Farm-Budget to date, and found only when Codex reviewed a
+*different* change. On `public.landlords`:
+
+```
+operator_manage_landlords | ALL | USING (operator_user_id = auth.uid()) | WITH CHECK: (none)
+```
+
+Postgres falls back to `USING` for the write check when an `ALL` policy omits `WITH CHECK`.
+So the only constraint on an INSERT was that the new row name the caller as its own
+operator. Nothing constrained the other columns — including `email` and `is_admin`.
+
+That table's `is_admin` column feeds `public.is_admin()`, which gates
+`farm_data.scoped_read` (`(auth.uid() = user_id) OR is_admin()`) and
+`landlords.admin_read_all_landlords`. Signup on the project is open and
+email-autoconfirmed. Chain it: sign up → insert ONE row naming yourself operator, with
+your own email and `is_admin = true` → you are an admin.
+
+Measured live inside a rolled-back transaction as a brand-new user: `farm_data` rows
+visible BEFORE the forged row **0**, AFTER **8** — the entire farm budget, plus all 6
+landlord records and all 17 landowner documents.
+
+**Why every prior scan missed it:** the scan read the policy, saw `auth.uid()` in the
+predicate, and scored it as scoped. `auth.uid()` in a *write* predicate proves the row
+points at you; it says nothing about which OTHER columns you may set. Scoping and
+privilege-granting are different questions.
+
+**Rules:**
+1. Enumerate every `FOR ALL` policy with a NULL `with_check` in `pg_policies`. Each is a
+   finding until shown otherwise — the write check is silently inherited from `USING`.
+2. For any table with a privilege-bearing column (`is_admin`, `role`, `tier`, `owner_id`,
+   `operator_user_id`, `plan`), ask specifically: **can a caller INSERT or UPDATE a row
+   that grants themselves that privilege?** A policy can be correctly row-scoped and still
+   be a privilege-escalation primitive.
+3. Trace every authorization helper (`is_admin()`, `has_role()`, `user_farm_ids()`) back to
+   the table it reads, then to the write policy on that table. A SECURITY DEFINER helper is
+   only as trustworthy as the weakest write path into its source data. `search_path`
+   hardening on the helper is irrelevant if the data it reads is caller-writable.
+4. Verify by attempting the escalation inside a transaction that ends in `RAISE` (which
+   rolls back the function's own writes), not by reading the policy text. The catalog says
+   what is allowed; only the attempt says what is reachable.
+
 
 If flags array is empty, use []
 ```
