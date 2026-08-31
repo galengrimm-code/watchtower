@@ -2057,7 +2057,7 @@ one you applied, and why, in the flag text:
 
 | Tier | Condition | Severity |
 |---|---|---|
-| **Reachable production** | In the production tree (`npm audit --omit=dev` still reports it) **AND** the vulnerable code path is actually reachable — the package is imported/executed by shipped code, or the advisory's preconditions match this app's configuration | **P1** |
+| **Reachable production** | In the production tree (`npm audit --omit=dev` still reports it) **AND** the package is imported/executed by shipped code **AND** the advisory's stated preconditions hold in this app's configuration. **Both legs are required.** Import alone is never sufficient — a production dependency is imported by definition, so "it is imported" restates the tier above rather than narrowing it. | **P1** |
 | **Unreachable production** | In the production tree, but reachability is disproven by evidence — the module is never imported, the vulnerable API is never called, or the advisory's stated preconditions do not hold here | **P2** |
 | **Dev/build only** | `npm audit --omit=dev` reports zero — the package never ships to the client bundle or the deployed runtime | **P3** |
 
@@ -2068,6 +2068,25 @@ Rules for applying this:
   reachability, use the higher tier and say the trace was inconclusive.
 - **Never write a P1 whose own flag text says the CVE cannot reach production.** That
   self-contradiction is the exact bug this rule exists to prevent.
+- **Read the advisory's preconditions FIRST, before tracing the call site, and name them in the
+  flag text.** The "vulnerable API" is whatever the *advisory* says triggers the bug — not the
+  package's main entry point that this app happens to call. Identify the precondition first (a
+  config flag, a specific class, a mode, a build artifact), then check whether this app satisfies
+  *that*. A trace establishing only "we import the package and call its primary API" has **not**
+  established reachability and must not be written as though it had.
+- **When the P1 and P2 rows are both satisfiable, P2 wins.** If the import leg holds but a
+  precondition leg is disproven, the finding is Unreachable production (P2), not Reachable (P1).
+  State both legs explicitly so the next cycle can audit the call.
+
+  *Worked example (receiptstack, v7.6 → corrected 2026-08-31).* `pdfjs-dist@5.7.284` /
+  GHSA-hq66-cqwq-w95j scored **P1** on the reasoning that the app dynamic-imports the package and
+  calls `getDocument()` on user-supplied bytes — "the vulnerable API is exactly the one called."
+  It was not. The advisory's trigger is `enableScripting`, which is not a `getDocument` option at
+  all: in 5.7.284 it is read in exactly one place in the bundle, `AnnotationLayer.render()` at
+  `build/pdf.mjs:20059`, as `params.enableScripting === true` — defaulting to **false** — and
+  `PDFPageProxy` (which owns the `page.render()` the app calls) never touches it. The scan traced
+  the import and stopped. Correct verdict: **P2, unreachable**, tripwire "escalates if any code
+  constructs AnnotationLayer or PDFViewer."
 - **Record the escalation tripwire** on any P2/P3 down-severity: state the change that would make it
   P1 (e.g. "escalates to P1 if `firebase/database` is ever imported"). A down-severity without a
   tripwire is a finding that silently stops being tracked.
