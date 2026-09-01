@@ -525,7 +525,7 @@ Check the page HTML source (via `curl -s <URL>`) for auth provider scripts:
 ### Information Leakage Endpoints
 - `curl -s <URL>/api/health` (and `/api/status`, `/api/ping`, `/healthz`, `/health`) — flag if response includes database type, connection status, latency, version numbers, or internal service names
 - Check page HTML source for Sentry DSN patterns: `sentry_key`, `ingest.sentry.io`, `@o[0-9]+.ingest` — the DSN itself is semi-public but can be abused for event flooding
-- Check for `/.well-known/security.txt` — note if missing (P4)
+- Check for `/.well-known/security.txt` — note if missing (P4). SKIP this check when the app is private AND fully auth-gated AND `signUpMode` is `invite-only`: a disclosure contact exists so an outside researcher can report a finding, and an internal tool with a known, closed user list has no such researcher. Flagging it there is noise the owner has to dismiss every cycle.
 - Check if `/_next/static/<buildId>/_buildManifest.js` is accessible — note the route count from the bloom filter if exposed
 
 ### CORS Verification
@@ -2193,7 +2193,7 @@ P4 — Low:
 - Firebase/public config in source (not a secret but not ideal) → category: hardcoded-config
 - Console.log statements left in production code with sensitive data → category: debug-logging
 - Prettier `--check` reports "Code style issues found in N files" in THIS scan run → category: formatting-inconsistency (confidence 1.0; flag text must reference the exact N from Prettier's output). If Prettier passes or no config exists, do NOT emit this flag.
-- Missing /.well-known/security.txt — no vulnerability disclosure contact for security researchers → category: no-security-contact
+- Missing /.well-known/security.txt — no vulnerability disclosure contact for security researchers → category: no-security-contact. **Do NOT emit for a private, fully auth-gated, `invite-only` app** (no outside researcher to receive; see STEP 5). Emit for anything with a public signup or public content surface.
 - Missing or misconfigured robots.txt — returns HTML instead of proper robots directives → category: missing-robots-txt
 
 ---
@@ -2302,7 +2302,7 @@ These are the valid category keys for flags. Every flag must use one of these:
 | info-leak-auth-config | P3 | Auth provider config publicly readable via unauthenticated API |
 | cors-open-deployed | P3 | CORS wildcard verified on deployed API routes |
 | deployed-header-mismatch | P2 | Security headers configured in code but not served in production |
-| no-security-contact | P4 | Missing /.well-known/security.txt |
+| no-security-contact | P4 | Missing /.well-known/security.txt. Not emitted for private, auth-gated, invite-only apps. |
 | missing-robots-txt | P4 | Missing or misconfigured robots.txt |
 | ai-mcp-cve | P1/P2 | MCP server matches a known CVE in threat-db |
 | ai-mcp-unpinned | P3 | MCP server uses @latest or no pinned version |
