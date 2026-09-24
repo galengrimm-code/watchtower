@@ -133,8 +133,15 @@ Iterate `config.projects`. Skip any project whose `folder` is in `config.exclusi
 
 **"Archived" contract:** archiving a project means "stop scanning it but keep the most recent findings visible on the dashboard." Phase B doesn't run scans for these. Phase C's `phase_c_update.py` iterates `config.projects` and looks for a scan JSON per slug — for Archived projects no scan JSON exists, so it prints `SKIP <slug>: no scan file` and leaves that app's entry in `data/apps.js` untouched. The `Archived` category in the dashboard has `excludeFromStats: true` and `dim: true` by convention, so the project still renders (dimmed) but doesn't contribute to aggregate P1/P2 counts.
 
+**Before dispatching any agent — snapshot the disposition ledger (v7.7):**
+```
+python "<watchtowerRoot>/scans/disposition_ledger.py"
+```
+Run this BEFORE Phase C touches `data/apps.js`. If it errors, do not abort the scan, but put `Disposition ledger: FAILED — expect re-emitted accepted findings` at the top of the debrief. Without the ledger, every decision recorded on the dashboard is invisible to the agents and comes back as a fresh active flag.
+
 For each remaining project:
 1. Read the security scan prompt from `<promptsRoot>/security-scan-prompt.md`.
+1a. **Hand the agent its DISPOSITION LEDGER.** Run `python "<watchtowerRoot>/scans/disposition_ledger.py" --slug <slug> --from-snapshot` (every agent reads the one snapshot taken above, so all agents see the same decisions) and paste its full output into the agent's instructions under the heading `DISPOSITION LEDGER`, with this line above it: *"These are the dashboard's recorded accept/resolve decisions for this project. Apply SCAN INTEGRITY RULE I2 to them: carry each into the block's Accepted Risks / Resolved tables, and do not re-emit the same underlying issue as an active flag. Match by issue, never by category."* A project with zero entries still gets the heading, so the agent knows the ledger was checked rather than skipped.
 2. Run STEP 1, STEP 1B, STEP 2, STEP 3, STEP 4 against the project code at `<portfolioRoot>/<folder>`.
 3. Append any per-project AI findings from Phase A to that project's `flags` array (categories prefixed `ai-`).
 4. Update the project's CLAUDE.md between `<!-- SCAN:AUTO:START -->` and `<!-- SCAN:AUTO:END -->` markers with scan results.
@@ -279,7 +286,7 @@ After all scans + Codex pass complete:
 
 4. git push.
 
-5. Also commit and push any CLAUDE.md updates in individual project repos. If those projects deploy via Vercel (or similar) on every commit, include `[skip ci]` in the per-project commit message — CLAUDE.md is local-only context and a deploy for that change is wasted build minutes. Format:
+5. Also commit any CLAUDE.md updates in individual project repos. **Push a project repo ONLY when ALL of these hold** — otherwise commit locally and do not push: (a) the repo has an upstream and every git command below exits 0 (fail closed); (b) `git rev-list --merges @{u}..HEAD` is empty; (c) EVERY unpushed commit touches only `CLAUDE.md` — check per commit with `git log --format= --name-only @{u}..HEAD`, never the aggregate diff, because a change-then-revert pair vanishes from the aggregate while its history still publishes; (d) every subject in `git log --format=%s @{u}..HEAD` matches `security scan .*: refresh CLAUDE.md SCAN:AUTO block` (a subject is not provenance — (c) is the real check); (e) `CLAUDE.md` was NOT dirty in Phase 0.5 — the scan rewrites only the block but commits the whole file, so an uncommitted owner edit outside the block would ride out on the push. If the repo holds ANY other unpushed commit, commit the scan block locally and do NOT push — a push would publish the owner's unreviewed work along with it. List every held repo in the commit body and the debrief as `Held local (owner has N unpushed commits): <repo>`. Pushing the clean case matters too: a scan commit left unpushed diverges the moment the owner pushes from another machine, and the next scan runs stale. If those projects deploy via Vercel (or similar) on every commit, include `[skip ci]` in the per-project commit message — CLAUDE.md is local-only context and a deploy for that change is wasted build minutes. Format:
    ```
    <scan-version> security scan <date>: refresh CLAUDE.md SCAN:AUTO block [skip ci]
    ```

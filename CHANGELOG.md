@@ -7,6 +7,37 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-09-24 — v7.7 (dispositions reach the agent)
+
+The dashboard preserved every accept/resolve decision across merges, and the scan re-reported
+them anyway. The merge was never the problem: the scan agent reads the repo, and rule I2 only
+carried forward decisions already written in the repo's own SCAN:AUTO block. Owners record most
+decisions on the dashboard. One project's CLAUDE.md read `Accepted Risks: _None_` while the
+dashboard held seven acceptances for it; the next scan re-emitted all eight of its findings as
+fresh active flags beside the preserved decisions. Across the portfolio, 43 of 318 active flags
+shared a category with a recorded decision.
+
+- **New `scans/disposition_ledger.py`.** Reads `data/apps.js` and hands each scan agent its
+  project's recorded decisions (`--slug <slug>`), or writes a full snapshot to
+  `scans/dispositions-ledger.json` (derived, gitignored). It deliberately does not decide
+  whether a new finding matches a decision — that judgment needs the code, which the agent has
+  and a regex over LLM prose does not (rule I6).
+- **I2 rewritten.** Decisions come from three places: the block's own tables, the orchestrator's
+  disposition ledger, and owner notes outside the block (`.claude/rules/watchtower-context.md`
+  or a section above `SCAN:AUTO:START`).
+- **The I2 cross-check now matches the underlying issue, not the category.** The old rule ("if a
+  category appears in Accepted Risks, it may not also be emitted as active") would have
+  suppressed a genuinely new advisory in an accepted category. The same cycle held one: a
+  resolved `npm-cve-high` for `axios` next to a new `npm-cve-high` for `@grpc/grpc-js` and
+  `protobufjs`. Same issue unchanged → carry; same category, different issue → active, citing
+  the decision it is not covered by; resolved issue present again → regression; a decision
+  asserting live state → re-verified, never carried on trust.
+- **Orchestrators must pass the ledger.** The example scheduled skill and the single-project
+  runbook both run the script and hand its output to the agent under a `DISPOSITION LEDGER`
+  heading. A scan without it should report that the ledger was missing rather than silently
+  re-emit decisions.
+- No new categories.
+
 ## 2026-08-01 — v7.5 continued (SCAN INTEGRITY RULES)
 
 Version deliberately held at v7.5 — same working week, same release. Twelve project
