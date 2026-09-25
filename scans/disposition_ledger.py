@@ -9,7 +9,7 @@ block. Dispositions applied to the dashboard never reach that block, so the next
 re-reports every one of them as a fresh active flag beside the preserved decision.
 
 Measured 2026-09-24: 43 of 318 active flags shared a category with an existing
-disposition. Baseline's own CLAUDE.md read "Accepted Risks: _None_" while the
+disposition. One project's own CLAUDE.md read "Accepted Risks: _None_" while the
 dashboard held 7 acceptances for it — all 8 of its active flags were re-emits.
 
 This script is the missing hand-off. It does NOT decide whether a new finding is the
