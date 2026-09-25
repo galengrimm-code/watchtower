@@ -87,7 +87,7 @@
 
 ## Metrics
 
-- **Total lines:** {N, excluding node_modules/.next/dist/build/package-lock.json}
+- **Total lines:** {N — application code only (.js/.jsx/.ts/.tsx/.mjs/.cjs/.css/.html/.sql); no .json; node_modules/.next/dist/build/.git/.claude pruned}
 - **Components:** {N} | **Pages:** {N} | **API routes:** {N}
 - **Files over 500 lines:** {list with line counts, or "_None_"}
 - **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})

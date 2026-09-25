@@ -36,6 +36,13 @@ shared a category with a recorded decision.
   runbook both run the script and hand its output to the agent under a `DISPOSITION LEDGER`
   heading. A scan without it should report that the ledger was missing rather than silently
   re-emit decisions.
+- **Total lines counts application code only** (folded in 2026-09-25, same release). The count
+  included `.json` and descended into `.claude/worktrees/`, where Claude Code keeps full copies of
+  the repo. One project read 821,400 lines against ~92,000 of code (89% parsed vendor JSON);
+  another 806,000 against ~212,000 (two nested worktrees). The command also piped through
+  `xargs wc -l`, which prints several "total" lines on large repos and breaks on spaces in paths;
+  it is now a single pruned `find ... -exec cat {} + | wc -l`. Expect a one-time step down in
+  line trends for data-heavy repos.
 - No new categories.
 
 ## 2026-08-01 — v7.5 continued (SCAN INTEGRITY RULES)
