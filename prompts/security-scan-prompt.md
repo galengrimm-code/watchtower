@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.7
+# Security Scan Prompt v7.8
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.8 (2026-09-28) — the scan's audit record moves out of the auto-loaded CLAUDE.md:**
+- **CLAUDE.md is read into context at the start of every session**, security-related or not. The SCAN:AUTO block ran 100–154 lines per project; in one app it was 36 KB of a 49 KB CLAUDE.md. Most of it is audit record a coding session rarely needs — flag tables, dispositions, deployed-surface probes, metrics — re-paid every session in every scanned project.
+- **STEP 3 now writes two files.** `## Security Notes`, `## Deployed Surface`, `## Strengths` and `## Metrics` go to a SCAN:AUTO block in `docs/security-scan.md`, which is not auto-loaded. CLAUDE.md keeps Tech Stack, Architecture, Environment Variables, Guardrails (Project-Specific carries what a coding session must not break) and Dev Commands, plus a new `## Security Scan` pointer line with the active-flag count.
+- **I2 migration.** On the first v7.8 scan of a project, its Accepted Risks / Resolved tables are still in CLAUDE.md's old block. I2 reads them from there before either file is rewritten. Write `docs/security-scan.md` first, then CLAUDE.md.
+- STEP 4 validates both blocks. Scripts that parse flags and metrics (`write_scan_jsons.py`, `compute-cycle-stats.js`) read both blocks joined, so pre-v7.8 projects still parse.
+- No new categories.
 
 **v7.7 (2026-09-24) — I2 rewritten: dispositions reach the agent, and matching is by issue, not category:**
 - **Dispositions recorded on the dashboard never reached the scan.** I2 told the agent to carry forward the Accepted Risks / Resolved tables *in the repo's existing block* — but owners record most decisions on the dashboard, not in the repo. One project's CLAUDE.md read `Accepted Risks: _None_` while the dashboard held 7 acceptances for it; the next scan re-emitted all 8 as fresh active flags beside the preserved decisions. Portfolio-wide, 43 of 318 active flags shared a category with a recorded decision. The orchestrator now supplies a **DISPOSITION LEDGER** per project, and I2 treats every ledger entry as a row of the existing tables. Owner-written disposition notes in the repo outside the block count too.
@@ -304,7 +311,7 @@ Run these commands and include the results:
 > These eleven checks each START with a grep to find candidate sites, but the flag decision requires READING the surrounding code and reasoning about dataflow across files — the grep only narrows where to look. A bare pattern match is never sufficient to flag. Each verdict must cite `{file:line}`. These were derived from a cross-vendor review (Claude + OpenAI Codex) and hand-verified against two real codebases before inclusion; the false-positive guards below are not optional — they are the reason these checks are trustworthy.
 
 > **READ THIS BEFORE JUDGING — calibration found these checks were systematically defeated by an agent rationalizing real findings down to "safe."** Two failure modes, both forbidden here:
-> 1. **Do not anchor on the project's own security self-description.** Ignore CLAUDE.md "Strengths" lines, prior-scan "strong posture" notes, and reassuring code comments when deciding fire/no-fire. Judge the CODE in front of you. Every miss in calibration happened in a codebase that asserts strong security — the assertion is not evidence of safety.
+> 1. **Do not anchor on the project's own security self-description.** Ignore the "Strengths" line (docs/security-scan.md from v7.8, CLAUDE.md before), prior-scan "strong posture" notes, and reassuring code comments when deciding fire/no-fire. Judge the CODE in front of you. Every miss in calibration happened in a codebase that asserts strong security — the assertion is not evidence of safety.
 > 2. **Each check below names the EXACT misconception that produces a false negative (marked "⚠ RATIONALIZATION TRAP"). If your reason for NOT firing matches the trap, you are wrong — fire it.** "It's quote-wrapped," "the compare is timing-safe," "the partner API is trusted," "there's a CSRF cookie" are not exemptions. Only the listed structural guards exempt a finding. When the code matches the FLAG condition and your only counter-argument is a trap, FIRE and let the verify pass sort it out — a false positive is cheap; a missed cross-tenant write in the commercial app is not.
 >
 > **DECISION POLICY (this overrides your default judgment — apply it to every check below).** You are NOT deciding "is this exploitable?" or "does this seem safe?" — that framing is what fails. You are adjudicating a structural predicate. Once a check's FLAG condition is met by code you have read, the finding **fires unless you can cite specific lines that prove one of THAT check's listed exemptions.** Exactly three verdicts are permitted:
@@ -1552,21 +1559,9 @@ Create a new CLAUDE.md and supporting doc structure:
 
 {REQUIRED: list grouped by service, or "None — {one-line reason, e.g. 'fully static, no secrets'}". NEVER omit this top-level heading.}
 
-## Security Notes
+## Security Scan
 
-### Active Flags
-| Severity | Category | Confidence | Description |
-|----------|----------|------------|-------------|
-{rows from scan; if no flags, replace the table body with the literal text "_None_" on its own line.}
-
-### Watch List (confidence < 0.8)
-{list, or "_None_"}
-
-### Accepted Risks
-{list with justification, or "_None_"}
-
-### Resolved
-{list with dates, or "_None_"}
+{REQUIRED, exactly one line: "Full report in `docs/security-scan.md` (not auto-loaded) — read it before security work. Active flags: {N} ({P1: a · P2: b · P3: c · P4: d}); accepted {A}; watch list {W}." Counts come from the tables written to docs/security-scan.md this scan.}
 
 ## Guardrails
 
@@ -1576,26 +1571,9 @@ Create a new CLAUDE.md and supporting doc structure:
 ### Project-Specific
 {REQUIRED: derived from active flags. If none apply: "_None — no project-specific issues_".}
 
-## Deployed Surface
-{REQUIRED if a production URL was detected in STEP 1 or STEP 1B: list verified HTTP headers, CORS posture, /.well-known/security.txt presence, etc. If no URL was detected: "_Not deployed_".}
-
-## Strengths
-
-{REQUIRED: one sentence, copied from the STEP 2 `strengths` field — concrete, verified, names specific mechanisms. Never generic praise.}
-
 ## Dev Commands
 
 {REQUIRED: generated from package.json scripts — list each script name with its command in a fenced bash block (e.g. `npm run dev`, `npm run build`, `npm test`). Machine-written every scan so it can never go stale. If the project has no package.json: "_No package.json — not an npm project._"}
-
-## Metrics
-
-- **Total lines:** {N — application code only (.js/.jsx/.ts/.tsx/.mjs/.cjs/.css/.html/.sql); no .json; node_modules/.next/dist/build/.git/.claude pruned}
-- **Components:** {N} | **Pages:** {N} | **API routes:** {N}
-- **Files over 500 lines:** {list with line counts, or "_None_"}
-- **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
-- **Production URL:** {URL, or "_Not deployed_"}
-- **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
-- **Scan prompt version:** v7.1
 
 <!-- SCAN:AUTO:END -->
 
@@ -1622,6 +1600,7 @@ Create a new CLAUDE.md and supporting doc structure:
 | File | What's in it | When to read |
 |---|---|---|
 | `CLAUDE.md` | This file. Architecture, conventions, guardrails. | Auto-loaded every session |
+| `docs/security-scan.md` | Scan record: flags, accepted risks, resolved, deployed surface, metrics | Before security work, or when a flag count above looks wrong |
 | `TECH-DEBT.md` | Prioritized issues from security scan | Before scaling, perf, or refactoring work |
 | `SESSION-HANDOFF.md` | What happened last session | Start of every session for continuity |
 | `PROJECT-LOG.md` | Append-only decision/milestone history | When investigating "why did we do X this way" |
@@ -1643,6 +1622,52 @@ At the end of every substantive session — when the user wraps up, switches top
 Do not ask permission to run this protocol. Just run it.
 ```
 
+**docs/security-scan.md** (v7.8 — create the `docs/` folder if needed; write this file BEFORE CLAUDE.md):
+```
+# Security Scan — {Project Name}
+
+> Written by the Watchtower security scan. Not auto-loaded — CLAUDE.md's `## Security Scan` line points here.
+> The block below is rewritten every scan. Record accept/resolve decisions on the Watchtower dashboard,
+> or in a note ABOVE the SCAN:AUTO:START marker (I2 source 3), never inside the block.
+
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.8. Do not edit this section manually. -->
+
+## Security Notes
+
+### Active Flags
+| Severity | Category | Confidence | Description |
+|----------|----------|------------|-------------|
+{rows from scan; if no flags, replace the table body with the literal text "_None_" on its own line.}
+
+### Watch List (confidence < 0.8)
+{list, or "_None_"}
+
+### Accepted Risks
+{list with justification, or "_None_"}
+
+### Resolved
+{list with dates, or "_None_"}
+
+## Deployed Surface
+{REQUIRED if a production URL was detected in STEP 1 or STEP 1B: list verified HTTP headers, CORS posture, /.well-known/security.txt presence, etc. If no URL was detected: "_Not deployed_".}
+
+## Strengths
+
+{REQUIRED: one sentence, copied from the STEP 2 `strengths` field — concrete, verified, names specific mechanisms. Never generic praise.}
+
+## Metrics
+
+- **Total lines:** {N — application code only (.js/.jsx/.ts/.tsx/.mjs/.cjs/.css/.html/.sql); no .json; node_modules/.next/dist/build/.git/.claude pruned}
+- **Components:** {N} | **Pages:** {N} | **API routes:** {N}
+- **Files over 500 lines:** {list with line counts, or "_None_"}
+- **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
+- **Production URL:** {URL, or "_Not deployed_"}
+- **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
+- **Scan prompt version:** {version from this prompt's title line}
+
+<!-- SCAN:AUTO:END -->
+```
+
 **Also create these supporting files if they don't exist:**
 
 **SESSION-HANDOFF.md:**
@@ -1653,7 +1678,7 @@ Do not ask permission to run this protocol. Just run it.
 - Initial security scan run
 
 ## Where to pick up next
-- Review scan findings in CLAUDE.md
+- Review scan findings in docs/security-scan.md
 ```
 
 **PROJECT-LOG.md:**
@@ -1670,7 +1695,7 @@ Do not ask permission to run this protocol. Just run it.
 
 **What:** First security scan and CLAUDE.md setup.
 
-**Details:** Scan prompt v6.0. See CLAUDE.md Security Notes for findings.
+**Details:** Scan prompt {version}. See docs/security-scan.md for findings.
 ```
 
 **TECH-DEBT.md** (only create if scan produces P3/P4 flags):
@@ -1697,6 +1722,13 @@ Do not ask permission to run this protocol. Just run it.
 - Replace everything between `<!-- SCAN:AUTO:START` and `<!-- SCAN:AUTO:END -->` (inclusive of marker lines) with fresh auto-generated content (including fresh markers)
 - Update the project name and description line above the markers if they changed
 - Do NOT touch anything outside the markers — preserve all manual sections exactly as they are
+- **Pre-v7.8 block (migration):** if the existing block still contains `## Security Notes`, it is the old single-file layout. Its `### Accepted Risks` and `### Resolved` tables are I2 source 1 for this scan — read them before rewriting anything. The fresh CLAUDE.md block no longer carries Security Notes, Deployed Surface, Strengths or Metrics; they move to `docs/security-scan.md`.
+
+**docs/security-scan.md — every case (v7.8):**
+- Write it BEFORE CLAUDE.md, so the carried-forward decisions land in the new file before the old block that held them is overwritten.
+- Absent → create it (and `docs/`) from the template in Case 1.
+- Present with markers → replace between the markers exactly as Case 2 does for CLAUDE.md; preserve everything outside them.
+- Present without markers (someone hand-wrote a file by that name) → do not overwrite it. Append the header note and the marked block at the end, under `## Watchtower scan (auto)`.
 
 **Case 3 — CLAUDE.md exists WITHOUT markers (legacy hand-written file):**
 - Read all existing content
@@ -1713,19 +1745,27 @@ After writing/updating CLAUDE.md, proceed to STEP 4 to validate the output befor
 
 ## STEP 4: VALIDATE OUTPUT (BLOCKING)
 
-After writing CLAUDE.md, read the file back and confirm the SCAN:AUTO block contains every required heading in this order:
+After writing both files, read each back and confirm its SCAN:AUTO block contains every required heading in this order.
+
+**CLAUDE.md block (v7.8 — six headings):**
 
 1. `## Tech Stack` — table with rows for Frontend / Backend / Data / Auth / Hosting / Testing at minimum
 2. `## Architecture` containing `### Folder Structure`, `### Key Files`, `### Data Flow`, `### External API Calls` (all four subheadings present, none omitted)
 3. `## Environment Variables` — heading present even when there are none (use "None — {reason}")
-4. `## Security Notes` containing `### Active Flags`, `### Watch List (confidence < 0.8)`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
+4. `## Security Scan` — exactly one line pointing to `docs/security-scan.md`, with counts that match that file's tables
 5. `## Guardrails` containing `### Universal (apply to all projects)` with exactly 9 numbered items copied from GUARDRAILS RULES, and `### Project-Specific`
-6. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
-7. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
-8. `## Dev Commands` — heading present, generated from package.json scripts (or the no-package.json placeholder) (v7.0 addition)
-9. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
+6. `## Dev Commands` — heading present, generated from package.json scripts (or the no-package.json placeholder) (v7.0 addition)
 
-If ANY required heading is missing, ANY subheading is omitted, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the entire SCAN:AUTO block from scratch — do not patch. Do not output success until the block is structurally complete.
+The CLAUDE.md block must NOT contain `## Security Notes`, `## Deployed Surface`, `## Strengths` or `## Metrics` — a copy left behind means the migration did not happen.
+
+**docs/security-scan.md block (v7.8 — four headings):**
+
+1. `## Security Notes` containing `### Active Flags`, `### Watch List (confidence < 0.8)`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
+2. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
+3. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
+4. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
+
+If ANY required heading is missing, ANY subheading is omitted, a moved section is still in CLAUDE.md, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the failing file's entire SCAN:AUTO block from scratch — do not patch. Do not output success until both blocks are structurally complete.
 
 After successful validation, output exactly two lines:
 ```
@@ -1766,7 +1806,8 @@ had been changed through the Supabase dashboard, as most of these schemas were.
 ### I2. Accepted Risks must survive regeneration — they are decisions, not output
 
 `### Accepted Risks` and `### Resolved` sit INSIDE the `SCAN:AUTO` block in 26 of 29
-projects, so every scan rewrites them. Their survival depends on an agent remembering an
+projects, so every scan rewrites them. (From v7.8 that block is in `docs/security-scan.md`;
+see source 1 below for the migration case.) Their survival depends on an agent remembering an
 instruction. **212 recorded accept/resolve decisions are one forgetful regeneration from
 vanishing**, and one of them is a scope note (`this acceptance does NOT cover xlsx`) that is
 the only thing keeping a reachable P1 from being absorbed into a blanket acceptance.
@@ -1775,7 +1816,11 @@ the only thing keeping a reachable P1 from being absorbed into a blanket accepta
 record. Owners record most decisions on the dashboard, and a decision the agent never sees
 is re-reported as a fresh finding every cycle — which trains the owner to stop reading.
 
-1. The existing `### Accepted Risks` and `### Resolved` tables inside the SCAN:AUTO block.
+1. The existing `### Accepted Risks` and `### Resolved` tables inside the SCAN:AUTO block
+   of `docs/security-scan.md`. If that file does not exist yet, or has no such tables, read
+   them from CLAUDE.md's SCAN:AUTO block instead — a pre-v7.8 project keeps them there until
+   its first v7.8 scan. If both files carry tables (an interrupted migration), carry every
+   row from both.
 2. The **DISPOSITION LEDGER** the orchestrator supplies for this project — the dashboard's
    recorded decisions (`scans/disposition_ledger.py --slug <slug>` in the Watchtower
    runtime). Each entry carries a status (ACCEPTED / RESOLVED), the original finding and
@@ -2694,14 +2739,14 @@ Every flag MUST include a confidence score (0.0-1.0):
 - 0.7-0.8: Suspicious pattern requiring specific conditions to exploit
 - Below 0.7: Do NOT include the flag — too speculative
 
-Flags with confidence below 0.8 go to a "Watch List" subsection in CLAUDE.md instead of Active Flags.
+Flags with confidence below 0.8 go to a "Watch List" subsection in docs/security-scan.md instead of Active Flags.
 
 ---
 
 ## ACCEPTED RISK PRESERVATION
 
 When scanning a project that has an existing CLAUDE.md:
-- Check the Accepted Risks section for previously accepted flags
+- Check the Accepted Risks section for previously accepted flags (in docs/security-scan.md from v7.8; in CLAUDE.md for a project not yet migrated — see I2 source 1)
 - If a flag category was previously accepted and the code has not changed, preserve status as "accepted" with original justification
 - New flags always start as "active"
 - Do not re-flag accepted risks unless the code materially changed

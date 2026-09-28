@@ -4,6 +4,7 @@
 **From:** a downstream operator running Watchtower across a ~29-project portfolio
 **Re:** `prompts/security-scan-prompt.md` (v7.1) + `prompts/claude-md-template.md`
 **Date:** 2026-06-27
+**Status (2026-09-28):** Recommendation 3 shipped in v7.8 as a variant — Architecture stays in CLAUDE.md, the four audit sections move to `docs/security-scan.md`. Recs 1, 2 and 4 are still open. See CHANGELOG.
 
 ---
 

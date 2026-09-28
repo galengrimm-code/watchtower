@@ -48,9 +48,11 @@ def parse_confidence(raw):
     return float(raw)
 
 
-def read_scan_section(claude_md_path):
-    """Return the SCAN:AUTO block's inner text, or "" if the markers are absent."""
-    with open(claude_md_path, 'r', encoding='utf-8') as f:
+def _read_block(path):
+    """Return one file's SCAN:AUTO block inner text, or "" if the file or markers are absent."""
+    if not path.exists():
+        return ""
+    with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
     m = re.search(r'<!-- SCAN:AUTO:START\b[^>]*-->(.*?)<!-- SCAN:AUTO:END\b', content, re.DOTALL)
     if not m:
@@ -58,6 +60,16 @@ def read_scan_section(claude_md_path):
         if not m:
             return ""
     return m.group(1)
+
+
+def read_scan_section(claude_md_path):
+    """Return the project's scan output: CLAUDE.md's SCAN:AUTO block plus, from v7.8,
+    the block in docs/security-scan.md (Security Notes, Deployed Surface, Strengths,
+    Metrics moved there so they are not auto-loaded every session). A pre-v7.8 project
+    has no companion file and everything is still in CLAUDE.md, so both layouts parse."""
+    claude_md_path = Path(claude_md_path)
+    companion = claude_md_path.parent / "docs" / "security-scan.md"
+    return _read_block(claude_md_path) + "\n" + _read_block(companion)
 
 
 def parse_tech(scan_section):

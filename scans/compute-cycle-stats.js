@@ -91,12 +91,20 @@ function repoChurn(repo, since) {
   return { commits, add, del, files: files.size };
 }
 
-function readBlock(folder) {
-  const p = path.join(loadConfig().portfolioRoot, folder, "CLAUDE.md");
+function readFileBlock(p) {
   if (!fs.existsSync(p)) return "";
   const c = fs.readFileSync(p, "utf-8");
   const m = c.match(/<!-- SCAN:AUTO:START\b[\s\S]*?-->([\s\S]*?)<!-- SCAN:AUTO:END/);
   return m ? m[1] : "";
+}
+
+// From v7.8, Metrics and Security Notes live in docs/security-scan.md, not CLAUDE.md.
+// Join both blocks so pre- and post-v7.8 projects parse the same way.
+function readBlock(folder) {
+  const root = path.join(loadConfig().portfolioRoot, folder);
+  const main = readFileBlock(path.join(root, "CLAUDE.md"));
+  if (!main) return "";
+  return main + "\n" + readFileBlock(path.join(root, "docs", "security-scan.md"));
 }
 
 function parseMetrics(block) {

@@ -7,6 +7,28 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-09-28 — v7.8 (the audit record leaves the auto-loaded CLAUDE.md)
+
+CLAUDE.md is read into context at the start of every session. The SCAN:AUTO block ran 100–154
+lines per project (report: `docs/report-claude-md-scan-block-bloat.md`); in one app it was 36 KB
+of a 49 KB CLAUDE.md. Most of it is audit record that a coding session rarely needs, paid again
+every session in every scanned project.
+
+- **STEP 3 writes two files.** `## Security Notes`, `## Deployed Surface`, `## Strengths` and
+  `## Metrics` move to a SCAN:AUTO block in a new per-project `docs/security-scan.md`, which is
+  not auto-loaded. CLAUDE.md keeps Tech Stack, Architecture, Environment Variables, Guardrails
+  and Dev Commands, plus a one-line `## Security Scan` pointer with the active-flag counts.
+  Project-Specific Guardrails stay in CLAUDE.md, so what a session must not break is still loaded.
+- **I2 migration.** On a project's first v7.8 scan its Accepted Risks / Resolved tables are still
+  in CLAUDE.md's old block; I2 reads them there, and STEP 3 writes `docs/security-scan.md` before
+  CLAUDE.md so no decision is lost between the two writes.
+- **STEP 4** validates both blocks (six headings in CLAUDE.md, four in the companion) and fails a
+  CLAUDE.md block that still carries a moved section.
+- **`write_scan_jsons.py` and `compute-cycle-stats.js`** read both blocks joined. Pre-v7.8
+  projects have no companion file and parse exactly as before.
+- Report recommendations 1 (drop the stamped Universal Guardrails) and 2 (drop Dev Commands /
+  Metrics duplication) are not in this release; Metrics moved rather than dropped.
+
 ## 2026-09-24 — v7.7 (dispositions reach the agent)
 
 The dashboard preserved every accept/resolve decision across merges, and the scan re-reported

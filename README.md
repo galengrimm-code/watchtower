@@ -203,7 +203,7 @@ Roughly 120+ flag categories grouped by what they look at:
 | Hygiene + tooling | Files over 1,500 lines (uniform threshold since v6.8), missing ESLint config, no `lint` script, missing .nvmrc, no security.txt, Prettier drift, CI not gating on lint |
 | Docs freshness (Phase C, deterministic script) | Dev commands that no longer exist in package.json, doc references to deleted files, SESSION-HANDOFF.md trailing the commit history, expired `Last reviewed:` dates — one consolidated `stale-docs` flag per project |
 
-Severity follows P1 (active risk) → P4 (hygiene). Each project's `CLAUDE.md` gets a SCAN:AUTO block with the same shape — easy to diff across runs.
+Severity follows P1 (active risk) → P4 (hygiene). Each project's `CLAUDE.md` gets a lean SCAN:AUTO block (stack, architecture, guardrails, a flag-count pointer), and the full record — flags, dispositions, deployed surface, metrics — goes to `docs/security-scan.md`, which is not auto-loaded every session (v7.8). Both have the same shape across projects — easy to diff across runs.
 
 ### Health grades & strengths (v7.0)
 
