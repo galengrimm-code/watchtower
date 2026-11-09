@@ -81,6 +81,7 @@ def detect_scan_version(prompt_path):
 SCAN_DATE = None
 SCAN_VERSION = None
 SLUG_TO_APP_NAME = {}
+ONE_OFF = False  # --only-slug merge: the block's own date is the scan date
 
 
 def jstr(s):
@@ -675,8 +676,12 @@ def scanned_on(scan):
     (blockDate, from write_scan_jsons.py) when it is older than the cycle, else the
     cycle date. A block left over from an earlier cycle must not read "(0d)" on Scan
     Status. A later blockDate (a run that crossed midnight) still files under the cycle.
+    A one-off (--only-slug) joins an earlier cycle on purpose, so its later blockDate is
+    the real scan date and wins.
     """
     bd = scan.get("blockDate")
+    if ONE_OFF and bd:
+        return bd
     return bd if bd and bd < SCAN_DATE else SCAN_DATE
 
 
@@ -864,13 +869,14 @@ def make_new_app_entry(scan, app_name, category, description, completion=None, n
 
 
 def main():
-    global SCAN_DATE, SCAN_VERSION, SLUG_TO_APP_NAME
+    global SCAN_DATE, SCAN_VERSION, SLUG_TO_APP_NAME, ONE_OFF
     parser = argparse.ArgumentParser(description="Merge scan JSONs into data/apps.js.")
     parser.add_argument("--date", default=None, help="Scan date (YYYY-MM-DD). Defaults to today (UTC).")
     parser.add_argument("--only-slug", default=None, help="Only merge this slug's scan; leave every other app entry (and its lastScanned) untouched.")
     args = parser.parse_args()
 
     SCAN_DATE = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ONE_OFF = bool(args.only_slug)
     config = load_config()
     SCAN_VERSION = detect_scan_version(resolve_prompt_path(config))
     print(f"Phase C update: date={SCAN_DATE}, scan version={SCAN_VERSION}")
