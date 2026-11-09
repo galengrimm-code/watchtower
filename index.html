@@ -638,7 +638,7 @@
       <h1>Watchtower</h1>
       <span class="sub" id="header-subtitle"></span>
     </div>
-    <p>Project portfolio, tech stacks &amp; flags — Updated <span id="header-updated">…</span></p>
+    <p>Project portfolio, tech stacks &amp; flags — Updated <span id="header-updated">…</span><span id="header-oldest-scan"></span></p>
   </div>
 
   <div id="sync-banner-mount"></div>
@@ -3357,6 +3357,22 @@ function render() {
       headerUpdatedEl.textContent = `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
     } else {
       headerUpdatedEl.textContent = "—";
+    }
+  }
+
+  // "Updated" is the NEWEST date anywhere, so one fresh one-off scan makes the whole
+  // portfolio look current. The oldest active scan is the number that goes stale.
+  const oldestEl = document.getElementById("header-oldest-scan");
+  if (oldestEl) {
+    const scannedDates = APPS.filter(a => a.category !== "Archived" && a.lastScanned)
+      .map(a => ({ name: a.name, d: a.lastScanned })).sort((x, y) => x.d.localeCompare(y.d));
+    if (scannedDates.length > 0) {
+      const o = scannedDates[0];
+      const days = Math.floor((Date.now() - new Date(o.d + "T00:00:00Z").getTime()) / 86400000);
+      oldestEl.textContent = ` · oldest active scan ${days} day${days === 1 ? "" : "s"} old`;
+      oldestEl.title = `${o.name}, scanned ${o.d}`;
+    } else {
+      oldestEl.textContent = "";
     }
   }
 

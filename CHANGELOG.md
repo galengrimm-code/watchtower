@@ -37,6 +37,26 @@ CDN-cached private responses, authorization that outlives revocation).
   (Watch List status, verdict, blocker, dispute); the `Coverage:` line under each card's metrics.
 - **New gate A3w** in `scans/verify_scan_integrity.py`: Watch List rows must equal the parsed
   `watchList` length. `verify_scan_integrity.py` now ships in this repo; it was runtime-only.
+- **Liveness outside the scan.** `scans/check_staleness.py` reports (and with `--email`, mails)
+  when the newest full cycle is older than `scanCadenceDays` plus 3 days. Run it on its own
+  schedule, never from inside the scan. The dashboard header adds the oldest active scan's age,
+  because "Updated" shows the newest date anywhere.
+- **The gate reads what each block says about itself.** `write_scan_jsons.py` records
+  `blockVersion`/`blockDate` from each SCAN:AUTO START marker. A5 compares `blockVersion` with the
+  prompt (it used to compare a value stamped from the prompt with the prompt, which could not fail),
+  new A8 fails a block dated before the cycle, and `lastScanned` takes an older block's own date.
+  Template markers now read `v7.9 on {YYYY-MM-DD}`.
+- **Gates that stop things.** `phase_c_update.py` refuses while `integrity-failure-<date>.json`
+  exists, refuses a full merge without the gate's `integrity-pass-<date>.stamp`, and refuses when a
+  scan JSON changed after the stamp. `_validate_structure.py` and `write_scan_jsons.py` exit nonzero
+  on failure, and the validator no longer reports success over zero projects. The example skill
+  gained the Phase B.6 gate step.
+- **Prompt restructure, no rule changes.** v6.5–v7.8 release notes moved verbatim to
+  `prompts/PROMPT-HISTORY.md` (an audit confirmed 79 of 82 operative notes in the body; the other
+  two were restored to the body). Integrity rules I1–I21 now sit together; I14–I21 had been after
+  GUARDRAILS RULES. ACCEPTED RISK PRESERVATION, which still matched by category, now points to I2.
+  The inlined CLAUDE.md template regained the v7.3 deployed-runtime Backend row it had lost. New
+  `scans/lint_prompt.py` (gate A9, WARN) checks size, rule order, template headings and markers.
 - **Mirror catch-up.** `write_scan_jsons.py` (whole flag text up to 1000 chars, the Active Flags
   parse fix), `generate-portfolio-stats.js` (current-state point from recorded dispositions),
   `check_docs_freshness.py` (extension allowlist for path tokens) and `index.html` (cards clamp,

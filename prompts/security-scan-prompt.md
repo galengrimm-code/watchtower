@@ -14,141 +14,10 @@ Scan this project and give me a full security audit and code analysis.
 - **STEP 1: fifteen new checks** in a new "v7.9 additions" block. Four grep-led checks with structural guards emit Active Flags: `weak-token-randomness`, `postmessage-origin-unchecked`, `postgrest-filter-injection`, `unsafe-url-scheme`. Eleven judgment-heavy, version-dependent or platform-dependent checks are **PROVISIONAL (Watch List only)** until a cycle calibrates them, same lane as the v7.1 provisionals: `private-response-cached`, `sw-cache-identity-leak`, `race-check-then-act`, `amount-tampering`, `export-scope-overreach`, `signed-url-overreach`, `stale-authz-after-revocation`, `llm-indirect-injection`, `auth-recovery-flow-gap`, `host-header-link-poisoning`, `user-regex-redos`.
 - **Integrity rules I19–I21.** I19 sets precedence: the v7.1 decision policy makes *candidates*; I19 gives each a status (CONFIRMED / UNRESOLVED / REJECTED). It separates "does it exist" from "how bad is it," leaves the dependency-CVE tier table in charge of CVE flags, defines which live reads may settle a blocker, and adds an orchestrator refutation pass that never auto-applies. I20: impact is what the evidence shows — no crash-to-outage, no same-user-to-escalation, no isolation inferred from "serverless" — and hardening with no affected principal is P4 at most. I21: one operation inventory per project, compare every path to the same effect, and a session check authenticates but does not authorize.
 - **Calibration run (receiptstack, 2026-11-09).** Cloudflare's method was run on receiptstack, read-only: one hunter pass and a critic pass, then three fresh verifiers, with live blockers settled by read-only catalog queries. 8 candidates → **3 confirmed, 5 rejected**. All 3 confirmed were absent from the 2026-11-07 Watchtower scan: a service-role `DELETE /api/match` gated only on a session (medium; I21 worked example), an OCR spend cap counting a client-writable proxy, carried as Resolved since April (low; LLM section), and a caller-keyed rate-limit RPC with no bound on key cardinality or timestamp reach (low; unbounded-growth). Four rejections needed a second org to exist. Migration `20261007130039` and an index definition pointed at the controls; the rejections rest on the live catalog, re-read on 2026-11-09: RLS on for `organizations` and `organization_users`, SELECT-only policies on both, the unique index `organization_users_one_org_per_user` present, no public function that inserts into either table, and `/api/team` as the only membership write path, which refuses a user already on another team. A migration names a control to verify; it does not prove the control is deployed (I1). The fifth rejection rested on the live `users` SELECT policy. Population counts played no part: they describe today, not what can be reached. **Draft review:** a Codex adversarial pass on the first draft found 24 problems — wrong PostgREST and ReDoS guards, a cache check that conflated three cache layers, an unsafe revocation guard, and precedence conflicts with the v7.1 decision policy and the CVE tiers. A second Codex pass found 17 of them only partly fixed and 17 new problems, among them a Find command Bash could not parse and guards that let one control clear an unrelated failure. This text is the third draft.
-- **Upstream pin:** `Upstream pin: cloudflare/security-audit-skill@c1c8a8c1471069fb0e188eeaff69b8e8db6564a8` (2026-09-14, "Clarify guidance and full audit modes"; https://github.com/cloudflare/security-audit-skill). Each weekly scan compares this pin with the repo's current `main` and reports drift in the debrief. Adopting an upstream change is a new prompt version, reviewed like this one; it never happens automatically.
+- **Upstream pin:** `Upstream pin: cloudflare/security-audit-skill@c1c8a8c1471069fb0e188eeaff69b8e8db6564a8` (2026-09-14, "Clarify guidance and full audit modes"; https://github.com/cloudflare/security-audit-skill). Each scheduled scan compares this pin with the repo's current `main` and reports drift in the debrief. Adopting an upstream change is a new prompt version, reviewed like this one; it never happens automatically.
 - **Not adopted:** Cloudflare's sandboxed execution of target code (Watchtower never runs target code), its multi-wave hunter/critic loop (cost), and the binary, desktop/mobile IPC, RPC/broker, container and release-signing classes (not this stack). Deferred to a later version: decompression bombs, detached upstream work after client cancel, soft-delete bypass, CI `permissions:` scope.
 
-**v7.8 (2026-09-28) — the scan's audit record moves out of the auto-loaded CLAUDE.md:**
-- **CLAUDE.md is read into context at the start of every session**, security-related or not. The SCAN:AUTO block ran 100–154 lines per project; in one app it was 36 KB of a 49 KB CLAUDE.md. Most of it is audit record a coding session rarely needs — flag tables, dispositions, deployed-surface probes, metrics — re-paid every session in every scanned project.
-- **STEP 3 now writes two files.** `## Security Notes`, `## Deployed Surface`, `## Strengths` and `## Metrics` go to a SCAN:AUTO block in `docs/security-scan.md`, which is not auto-loaded. CLAUDE.md keeps Tech Stack, Architecture, Environment Variables, Guardrails (Project-Specific carries what a coding session must not break) and Dev Commands, plus a new `## Security Scan` pointer line with the active-flag count.
-- **I2 migration.** On the first v7.8 scan of a project, its Accepted Risks / Resolved tables are still in CLAUDE.md's old block. I2 reads them from there before either file is rewritten. Write `docs/security-scan.md` first, then CLAUDE.md.
-- STEP 4 validates both blocks. Scripts that parse flags and metrics (`write_scan_jsons.py`, `compute-cycle-stats.js`) read both blocks joined, so pre-v7.8 projects still parse.
-- No new categories.
-
-**v7.7 (2026-09-24) — I2 rewritten: dispositions reach the agent, and matching is by issue, not category:**
-- **Dispositions recorded on the dashboard never reached the scan.** I2 told the agent to carry forward the Accepted Risks / Resolved tables *in the repo's existing block* — but owners record most decisions on the dashboard, not in the repo. One project's CLAUDE.md read `Accepted Risks: _None_` while the dashboard held 7 acceptances for it; the next scan re-emitted all 8 as fresh active flags beside the preserved decisions. Portfolio-wide, 43 of 318 active flags shared a category with a recorded decision. The orchestrator now supplies a **DISPOSITION LEDGER** per project, and I2 treats every ledger entry as a row of the existing tables. Owner-written disposition notes in the repo outside the block count too.
-- **I2's cross-check was category-level, which would have buried real findings.** "If a category appears in Accepted Risks, it may not also be emitted as active" suppresses a *new* advisory in an already-accepted category. The same cycle held one: a resolved `npm-cve-high` for `axios` beside a genuinely new `npm-cve-high` for `@grpc/grpc-js` / `protobufjs`. Matching is now on the **underlying issue** — the same site, package, advisory or control — never the category key alone.
-- **Total lines now counts application code only** (folded into v7.7, same week). The old count included `.json` and walked into `.claude/worktrees/`: one app read 821,400 lines against ~92,000 of code (89% was parsed vendor data), another 806,000 against ~212,000 (two nested worktree copies). Five apps were inflated by 60%+. Expect a one-time step down in those apps' line trends at v7.7.
-- **A resolved issue that reappears is a regression, and says so.** A ledger entry asserting a *live* fact (policy shape, header, DNS record) is re-verified, never carried on trust.
-- No new categories.
-
-**v7.6 additions (2026-08-13) — the scan's own blind spots, from one project's remediation day:**
-
-Every item below is a class this scan **did not catch, or reported wrongly**, found while remediating a
-single app. Four of the five are credentials or endpoints that outlived the thing that needed them —
-the scan is repo-scoped, and none of them lived in a repo.
-
-- **I13 (BLOCKING): a stale or dirty local clone must SUPPRESS deployed-state findings, not just note them.** `repo-sync-skipped-dirty` already existed as P4, and its own row says the scan "read possibly-stale local code" — but nothing acted on it. STEP 1B kept comparing live production headers against local config. On a clone **17 commits behind origin**, that produced a `deployed-header-mismatch` **P2 for a CSP that had been fixed a month earlier**. The false finding survived two scan cycles and was still being carried as live. A comparison between live production and stale local is not a weak signal; it is not a signal.
-- **Phase 7 could not have caught the one real secret in `~/.claude/`.** Its patterns are vendor-prefix only (`sk-`, `ghp_`, `AKIA`, `xox`, `BEGIN PRIVATE KEY`). The genuine hit was a **36-character UUID bearer token hardcoded inside a permission allow-rule** — matching none of them. It was found by an agent reading the settings file, not by the sweep that exists to find it. Added prefixless-credential patterns.
-- **Deleting a secret from `~/.claude/` does not remediate it.** The same token persisted in **9 `file-history/` snapshots** (97 dirs, 113 MB, months deep) after the rule was removed. Phase 7 now reports history copies alongside the primary hit and states that **rotation is mandatory** — deletion alone is not remediation.
-- **New: orphaned platform credentials.** A live 55-character API key sat in the deploy platform's env for ~131 days, **referenced nowhere in any repo**. Repo-scoped grep structurally cannot see this. Diff platform env key names against keys referenced in source.
-- **New: retired-backend endpoints that were never revoked.** A migrated-away Google Apps Script web app was still deployed `Execute as: Me` / `Who has access: Anyone`, with **unauthenticated read AND write/delete** over a live Sheet — reachable by anyone holding the URL. A sibling app's equivalent held customer names, phones and emails. The scan cannot reach Google Workspace, so this is detected by its **fingerprint in git history** and handed to a human. Do not claim coverage of a platform you cannot query.
-- **Two grep-able classes** from real production defects on the same app: `req.query.X` consumed as a string with no array guard (repeated params parse to an array → HTTP 500, uncached, re-invoked every request), and a CDN-cached serverless route that does not validate its query string (unknown params fork the cache key, bypassing `s-maxage` and re-invoking upstream work on every call).
-- 5 new categories: `orphaned-platform-credential`, `retired-backend-endpoint-live`, `retired-backend-endpoint-unverified`, `query-param-array-crash`, `unvalidated-query-cache-fork`. The `file-history` retention rule extends the existing `ai-config-dangerous` finding rather than adding a key — it is the same secret, with a remediation correction.
-
-**v7.6 corrections applied before release — cross-vendor review (Codex) plus empirical testing of every new snippet:**
-- **The retired-backend check originally scored P1 from a git-history hit alone.** That is the exact inferred-state defect I1 exists to prevent: history proves a string existed, not that anything is deployed, and a repo that correctly removed *and* revoked an endpoint would have scored a critical false positive. Now it **recovers the URL and probes it**, with severity from the response (200 unauthenticated → P1, 401/403 → P2, 404 → clean) and a separate `-unverified` P3 handoff when no probe is possible.
-- **It also originally suppressed on "still referenced in current source."** Tested against the repo that produced the finding: the dead Apps Script URL is still referenced by a completed one-shot migration script, so the rule **would have stayed silent on its own founding case**. A surviving reference from a migration or legacy tool says nothing about whether the endpoint is deployed. Suppression removed.
-- **The env-orphan grep recursed through `node_modules` and build output** — a dependency mentioning the same name made an orphan look referenced (121 apparent references vs 7 real ones on the test repo). Now excluded, scoped to one environment, and the platform-injected exclusion that was described in prose is actually implemented.
-- **A bracket-form extraction used ERE lookahead**, which `grep -E` does not support: it silently matched nothing, which would have dropped every `process.env["X"]` reference and manufactured false orphans. Replaced with a plain uppercase-token match, verified against dot, bracket-double-quote and bracket-single-quote forms.
-- **An env var NAME is not a credential.** Severity is now by name shape (`*_KEY`/`*_SECRET`/`*_TOKEN`/… → P2; feature flags, public IDs and URLs → P4), and the flag text must say the value was never inspected.
-- **`searchParams.get()` was wrongly grouped with `req.query` array crashes.** `URLSearchParams.get()` returns `string | null` and never an array (`getAll()` is the array form) — verified in Node. Including it would have produced pure false positives. Rule now scoped to array-returning parsers only.
-- **The `file-history` count command was prose in a code block**, not runnable. Replaced with an executable procedure that anchors on a non-secret string so the credential never enters argv or shell history.
-- **I13's freshness check counted all dirty files** while the rule spoke about STEP 1B config files; it now gates on `behind`/`unknown upstream`/`dirty config` specifically, and the `repo-sync-skipped-dirty` row was rewritten to cover all three conditions rather than only the original orchestrator-injected dirty case.
-- Both new checks were validated end to end against a repo with a **known answer**: they returned exactly the one real orphaned credential and the one real retired-backend fingerprint, with no false positives.
-
-**v7.5 additions (2026-08-01) — SCAN INTEGRITY RULES, from twelve owner audits of a full v7.5 cycle:**
-- New **SCAN INTEGRITY RULES** section (I1-I12), immediately before FLAG OUTPUT RULES. Every rule comes from a defect found in the SCAN, not in an app. Read it before STEP 1.
-- **I1 never bound severity on an inferred ABSENCE** — a scan lowered a finding because "no DELETE policy exists in any migration"; the live database had a permissive one, allowing cross-tenant deletion. Presence claims degrade gracefully; absence claims do not.
-- **I2 Accepted Risks must survive regeneration** — 212 accept/resolve decisions across 26 projects live INSIDE the regenerated block, surviving only if an agent remembers. Reproduce every row verbatim including scope notes; never re-emit an accepted *issue* as active (v7.7: match by issue, not category; read the orchestrator's disposition ledger too).
-- **I3 do not damage the repo you are scanning** — scan commits broke a live app's production deploys twice (~5.5 days) via a prettier-gated build, and `[skip ci]` hid it without preventing it. Run the repo's own gate before committing.
-- **I4 count root advisories, not affected packages**, and verify a patched release exists and is API-compatible before calling a fix available.
-- **I5 judge a deny list by effective strength** — an allowed interpreter (`node`, `cat`, `npx`) voids every path-based Bash deny.
-- **I6 strip comments before matching** — four owners reported `innerHTML` matched inside comments saying the code avoids it. A regex reading prose as structure is this scan's most common defect.
-- **I7 score a dimension N/A when the mechanism is absent** (cookie flags on token-auth apps); a CSP is not a compensating control for a JS-readable session cookie; "present but permissive" is not "absent."
-- **I8 skipped is not passed** · **I9 shared Postgres project is not a shared namespace** (a routine `DROP ... IF EXISTS` would have destroyed a sibling app's 76k-row audit table) · **I10 enumerate every instance and headline the severe half** · **I11 two new grep-able classes** (`auth-gate-fails-open-on-missing-config`, `auth-matcher-unanchored-exclusion`) · **I12 assorted owner corrections**.
-- **I14 an amplifier written inside another finding vanishes when that finding is fixed** — open/unverified signup was a clause in a P1 description, not its own row; give preconditions their own flag.
-- **I15 a shared-project advisor is not automatically the scanned repo's finding** — confirm the repo exercises the feature before attributing it.
-- **I16 follow a shared resource to its consumers, usually in another repo** — client-side filtering is presentation, never authorization.
-- **I17 read the control flow before scoring a weak control** (OAuth-then-PIN is not PIN-as-perimeter), and re-derive static summary facts each scan.
-- **I18 a `FOR ALL` policy with no `WITH CHECK` uses `USING` as its write check** — enumerate them all; a row-scoped write policy can still let a caller set `is_admin` on their own row. Trace every auth helper back to the write policy on the table it reads.
-- 2 new categories. Version deliberately held at v7.5 — same working week, same release.
-
-**v7.5 fixes (2026-07-30) — severity must describe THIS app's exposure, not the advisory's headline:**
-- **Dependency CVE reachability tiers (BLOCKING).** `npm-cve-critical` / `npm-cve-high` are no longer flat P1. Severity is now assigned by reachability: **P1** reachable in the production tree, **P2** in the production tree but reachability disproven by cited evidence, **P3** dev/build-only (`npm audit --omit=dev` clean). Down-severities require named evidence and an escalation tripwire; an inconclusive trace uses the higher tier. See the rule in SECURITY FLAG RULES.
-- **Why:** the taxonomy said `npm-cve-high | P1` flatly, while actual portfolio practice was P3 for dev-only (8 instances), P2 for prod-but-unreachable (2), and P1 only for prod-and-reachable (3). The written rule and the practice disagreed, so agents split — on the 2026-07-30 cycle four projects down-severitied on reachability while fourteen applied P1 mechanically, and one emitted an `npm-cve-critical` **P1** whose own flag text read *"dev-only — never shipped."* Portfolio P1 rose ~9× from a rubric change rather than a posture change, burying the genuinely new findings and destroying cycle-over-cycle comparability.
-- **STEP 1B URL-extraction fallback (BLOCKING).** Before concluding "no URL found", probe `metadataBase`/sitemap targets, `.vercel/repo.json`, and prior-scan-recorded URLs — not just `vercel.json`/`CNAME`/`homepage`. Two live public sites were recorded as `_Not deployed_` with STEP 1B skipped entirely; both answered HTTP 200 when probed. Same defeat-by-input-selection class as the v7.3 `.nvmrc` bug.
-- **`static-admin-bearer` severity by CALLER MODEL (BLOCKING).** Was flat-critical, so a VPS-to-Vercel cron with a high-entropy secret scored the same as an `/api/admin/*` route in `PUBLIC_PATHS` returning every customer's records. Now P1 human-reachable or cross-tenant, P2 machine-only but mutating/data-returning, P3 machine-only and inert. "Machine-only" requires cited evidence (cron declaration, platform header check, calling service) — a high-entropy secret does NOT lower the tier by itself, and the rationalization traps still govern whether it fires at all.
-- **Added the missing `repo-sync-skipped-dirty` (P4) taxonomy row.** The orchestrator injects this key every cycle, but it was absent from the table — so it collided with the "never use a category key outside the taxonomy" rule and every agent had to resolve the contradiction itself.
-- **Known limitation, not fixed here:** two `check-standards.mjs` assertions are name-shaped rather than behavior-shaped and err in both directions — a repo whose dataset merely *describes* other apps' notification code scored a false `fail`, and an app with a real operator kill switch named `paused`/`isNotificationsPaused` scored a false `kill-switch` fail. Same root cause as the `durable-event-FIRST` assertion removed 2026-07-17. Keep pasting script output verbatim and put any doubt in a separate adjudication section — never re-score.
-
-**v7.4 additions (2026-07-16) — standards compliance becomes MEASURED, not asserted:**
-- New **STEP 1D: STANDARDS COMPLIANCE** — runs `~/.claude-sync/standards/check-standards.mjs . --json` and pastes the result verbatim into a new top-level `standards` key. **Deterministic script, not LLM judgment.**
-- **Why:** this scan had no standards check at all, yet `data/apps.js` carried LLM-written prose claiming an app "follows NOTIFICATION-STANDARD v0.3" — while that standard's own audit says the app is PARTIAL (missing installation_id, outbox/retry, kill switch). The scan was reporting compliance it never checked, in a file the owner trusts. Prose fields can only ever say nice things; they structurally cannot render a NO.
-- **Hard rule:** standards compliance may ONLY be reported in the `standards` key, from script output. `strengths` / `integrations` and every other prose field must never name a standard or its version.
-- Rules that can't be expressed as assertions are reported as **unknown, never as a pass**. Script unavailable → `standards: null` + `standards-check-unavailable` (P4). An honest null beats a plausible guess.
-- New categories: `standard-violation` (P2; P1 on `commercial` tier), `standard-partial` (P3), `standards-check-unavailable` (P4).
-
-**v7.3 fixes (2026-07-15) — `.nvmrc` vs `engines` conflation: a suppressed-flag bug, not a typo:**
-- **Root cause:** STEP 1 and the flag rule both read `.nvmrc` **or** `package.json` engines as interchangeable sources for the Node runtime. They are not. `.nvmrc` is the **local dev toolchain**; `engines.node` (and for Firebase, `functions/package.json` engines) is the **deployed runtime**. When they disagree the scan could pick either — and picking `.nvmrc` **silently suppressed an `outdated-runtime` flag on a real EOL-bound Node 20 Cloud Functions runtime**. A check was defeated by its own input selection; the wrong doc line was cosmetic, the missed flag was not.
-- **Fixed in three places** (the original report found two — the taxonomy row was also conflated): the STEP 1 runtime check, the `outdated-runtime` flag rule, and the CATEGORY TAXONOMY description.
-- **New rule:** the **deployed** runtime is the ONLY source for `outdated-runtime` — `functions/package.json` engines when present (Cloud Functions), else root `package.json` engines. **`.nvmrc` may never be reported as a deployed runtime and may never clear the flag.**
-- **New category `runtime-declaration-mismatch` (P4)** — when `.nvmrc` and the deployed `engines.node` declare different majors, surface the drift instead of silently picking one. This is what makes the class of miss self-reporting rather than latent.
-- STEP 3 / `claude-md-template.md`: the Backend row must carry the **deployed** runtime and must never cite `.nvmrc`.
-
-**v7.2 additions (2026-06-24) — dependency supply-chain hardening + mass-assignment upgrade (borrowed selectively at the methodology level from the public Anthropic-Cybersecurity-Skills corpus; pentest/live techniques discarded, only static-scannable detection kept — no third-party code or skills installed):**
-- STEP 1: install-script triage upgraded — the existing `supply-chain-install-scripts` (P3) bullet now escalates to a new **`malicious-install-script` (P1, A08)** category ONLY on a dangerous *combination* (remote fetch + execution, credential read + network exfil, or obfuscation + execution) — a single weak signal (`process.env`, `node -e`, `atob(` alone) stays P3. Emitted INSTEAD OF `supply-chain-install-scripts` for that dependency, never both. Splits real install-time malware out of the benign-install-script noise (~2% of npm packages use install scripts legitimately — the *behavior combination*, not the presence, is the signal).
-- STEP 1: new **`dependency-confusion` — PROVISIONAL (Watch List only), A08** — scoped/internal-looking packages with no private-registry pin in `.npmrc`. Kept provisional (not an Active Flag) because confirming a name is actually private/claimable needs a registry-ownership lookup the unattended prompt can't do — `.npmrc`-absence alone false-positives on legitimate public scopes. Joins the candidate-generation script lane with `typosquat-dependency`. (Caught by Codex on the v7.2 review.)
-- STEP 1: new **`typosquat-dependency` — PROVISIONAL (Watch List only)** — dependency names within edit-distance 1–2 of a popular package. Pure-prompt name-similarity is unreliable (needs Levenshtein + registry age/download lookups), so this joins the candidate-generation script lane alongside the v7.1 provisionals; never an Active Flag until that script layer lands.
-- STEP 1: `mass-assignment` (still PROVISIONAL) definition sharpened — widened the privileged-field list and made the predicate an explicit **allowlist-vs-denylist** test: a schema that STRIPS unknown keys clears; a denylist that deletes a few known-bad keys does NOT.
-- STEP 1: `nosql-injection` (existing P1) sharpened — added the operator-injection signature: request input reaching a Mongo/Mongoose query as an *object* rather than a coerced string, enabling `$ne`/`$gt`/`$regex`/`$where` auth-bypass — not just raw query concatenation.
-- Scope note: the source corpus is a pentest/SOC/forensics collection (live targets, Burp, "written authorization") — out of scope for Watchtower's unattended static portfolio sweep. Only the detection substance that survives as static code review was adopted.
-
-**v7.1 additions (2026-06-12) — multi-file authorization & protocol checks (verified against two production codebases, cross-vendor: Claude Fable 5 + Opus 4.8 + OpenAI Codex):**
-- STEP 1: eleven semantic-logic checks for bug classes a single-file grep can't see, each hand-verified against real findings before inclusion. New categories: `unsigned-tenant-binding`, `oauth-state-not-verified`, `oauth-pkce-missing`, `static-admin-bearer`, `csv-formula-injection`, `token-in-logs`, `verbose-vendor-logging`, `external-redirect-fetch-unvalidated`, `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header`.
-- Five of these are **PROVISIONAL**: emit to the Watch List (confidence < 0.8) only, never Active Flags. `rls-write-side-coverage`, `mass-assignment`, `trusted-client-header` (never calibrated against a verified corpus); plus `verbose-vendor-logging` and `external-redirect-fetch-unvalidated` (calibrated, but pure-prompt adjudication proved run-to-run flaky — external-redirect produced a false NEGATIVE via partner-trust rationalization across four hardening rounds). All five await the hybrid candidate-generation script layer. Marked inline.
-- `oauth-pkce-missing` is **advisory only (P4)** and fires solely on confirmed public clients (token exchange sends no client secret) — confidential clients never trip it. This is deliberately narrow: the class was false-positive-prone in testing until the secretless-exchange condition was added.
-- **Calibration record (v7.1, two production codebases, multi-round):** the six non-provisional checks (`unsigned-tenant-binding`, `oauth-state-not-verified`, `oauth-pkce-missing`, `static-admin-bearer`, `csv-formula-injection`, `token-in-logs`) reached stable, correct verdicts across repeated runs and across both repos ONLY after a **decision-policy** change, not prose hardening alone: the agent adjudicates a structural predicate (fire unless a LISTED exemption is provably cited; "seems safe"/"can't prove exploit" → Watch List, never silence) rather than free-forming "is this exploitable?". Pure-prompt judgment without that policy oscillated between false-negative-heavy (lenient) and false-positive-heavy (aggressive). The cross-file dataflow checks resisted even the policy flip — hence their provisional status and the planned script layer.
-- Methodology note: these checks target the gap a pattern-scanner structurally can't reach — verifying a control is not just *present* but *correct for the right user and the right data*. Multi-file authorization and OAuth-protocol dataflow are the highest-value blind spots. Confirmed semantic findings should graduate into deterministic checks here at each version bump.
-
-**v7.0 additions (2026-06-09/10) — error-handling and memory-growth sweeps, strengths line, health grade, docs freshness:**
-- Docs freshness: `scans/check_docs_freshness.py` (deterministic script, NOT an LLM check) validates hand-written doc claims per project — dev commands vs package.json scripts, backticked repo-relative path references vs disk (with abbreviated-path suffix matching, cross-root resolution, and intentional-nonexistence filtering), SESSION-HANDOFF freshness vs commits, `Last reviewed: YYYY-MM-DD` ages. Runs in Phase C of the scheduled flow with `--merge`; at most ONE consolidated P4 `stale-docs` flag per project. New category `stale-docs`.
-- STEP 3 CLAUDE.md: new machine-written `## Dev Commands` heading inside the SCAN:AUTO block, generated from package.json scripts each scan — derivable content can't go stale when a machine rewrites it. STEP 4 now validates 9 headings.
-- Client-prefix env grep narrowed: flags credential-shaped names (SECRET / SERVICE_ROLE / PRIVATE, or ending _KEY / _TOKEN) or credential-looking values — `NEXT_PUBLIC_ADMIN_URL` no longer false-positives.
-- STEP 1: swallowed-exception sweep — empty `catch {}` blocks and catch/except bodies that neither log, rethrow, nor surface the error. Silent failures hide both bugs and attacks; new category `swallowed-exception` (OWASP A09).
-- STEP 1: unbounded in-memory growth sweep — module-level Map/Set/array/object collections written to from request handlers with no eviction path (delete/clear/TTL/LRU/max-size). Complements `serverless-memory-state` (which covers cold-start resets); new category `unbounded-growth`.
-- STEP 2 JSON + STEP 3 CLAUDE.md: new required `strengths` output — one concrete, verified sentence on what this codebase does well (e.g. "Signature-verified webhooks, RLS on every table, Playwright coverage on auth + checkout"). Tells a future refactor what not to break. New `## Strengths` heading in the SCAN:AUTO block, enforced by STEP 4.
-- Dashboard (no scan work): health grade A–F per app, computed client-side from data the scan already emits — active flag severities, test posture, file-size hygiene, scan recency. Formula documented in the dashboard's grade modal.
-
-**v6.9 additions (2026-06-09) — Edge Function secrets, client-prefix misnaming, prompt bug fixes:**
-- STEP 1: Supabase Edge Function secret sweep — grep `supabase/functions/` for hardcoded keys/tokens/JWTs (uses existing `hardcoded-secrets` category; Edge Function source ships to version control and the deploy bundle)
-- STEP 1: client-prefix env var misnaming grep — `NEXT_PUBLIC_*`/`VITE_*` names containing SECRET/SERVICE/PRIVATE/ADMIN/WEBHOOK ship to the client bundle by framework convention regardless of intent (uses existing `env-exposure` category)
-- Fix: NVD API key prose said "query param"; NVD API 2.0 takes the key as the `apiKey` request header, which is what the curl examples already did. Prose corrected to match.
-- Fix: STEP 3 / claude-md-template SCAN:AUTO marker examples were frozen at "v6.4" — now read "v6.9"; always stamp the marker with the version from this prompt's title line.
-- Phase 11: Windows path note — `~/.claude/` paths resolve to `%USERPROFILE%\.claude\`; use `sha256sum` from Git Bash or `Get-FileHash` in PowerShell.
-
-**v6.8 additions (2026-06-06) — relax file-size heuristic for AI-readable code:**
-- `file-over-500` threshold raised from 500 to **1500 lines, uniformly across all file types** (.js, .ts, .jsx, .tsx, .css, .html, .py, etc.). The prior 500-line cutoff was 2000s-era human-reading guidance; AI-readable code can be denser without becoming unworkable, and the proxy weakens as humans stop being the primary readers.
-- Category key stays `file-over-500` for backwards compatibility with existing scan history and dashboard fields (`metrics.filesOver500`). Semantic meaning shifts: "files over the split threshold" with threshold now 1500.
-- The .jsx/.tsx-specific 1500 carveout from earlier prompts is now the universal default; no per-extension exception.
-- Cohesion still matters more than raw line count. A 1200-line file doing one thing is fine; a 300-line file doing six things is worse. Use the flag as a "consider splitting" signal, not a mandatory refactor trigger.
-
-**v6.7 additions (2026-05-21) — OWASP Top 10 (2021) categorization:**
-- Every flag category in the taxonomy now maps to an OWASP Top 10 (2021) category where applicable (AI supply-chain and project-hygiene flags have no OWASP equivalent — left blank)
-- STEP 2 JSON output: each flag may include an optional `owasp` field (e.g., `"owasp": "A05"`) when the flag's category maps to one
-- New section "OWASP TOP 10 MAPPING" added below the CATEGORY TAXONOMY — single source of truth for flag → OWASP mapping
-- Mapping reference: https://owasp.org/Top10/ (CC BY-SA 4.0)
-- Inspired by the structured threat-modeling approach in gstack's `cso` skill. No code copied; implementation is original.
-
-**v6.6 additions (2026-05-15) — sourced from Codex adversarial review of v6.5:**
-- STEP 1: SSRF user-URL-fetch grep, webhook replay protection check, open-redirect detection, path-traversal in file read/download, prototype-pollution merge grep, auth-endpoint rate-limiting check
-- STEP 1B: CORS origin reflection + credentials probe, SSRF live probe against `/api/proxy?url=`-style routes, exposed-endpoint curl sweep (`/.env`, `/.git/HEAD`, `/backup.sql`, `/actuator`, etc.)
-- New flag categories: cors-origin-reflection, ssrf-user-url-fetch, webhook-replay-unprotected, open-redirect-unvalidated, path-traversal-file-read, prototype-pollution-merge, public-sensitive-endpoint, auth-endpoint-no-rate-limit
-
-**v6.5 additions (2026-05-15):**
-- STEP 1: service_role key surface count, Stripe webhook signature pattern, GitHub Actions unpinned-uses check, LLM-output-into-DOM trace, audit-log + period-locking schema check (formalized from DATA INTEGRITY RULES)
-- STEP 1B: DMARC/SPF/DKIM/CAA DNS audit, unauthenticated cron/webhook endpoint audit
-- STEP 1C: Phase 11 (memory file hash drift detection), Phase A LLM spend-cap inventory reminder
-- New flag categories: missing-dmarc, dmarc-policy-none, missing-spf, missing-caa, excess-service-role-surface, stripe-webhook-unverified, gha-unpinned-action, llm-output-dom-render, missing-audit-log, missing-period-lock, ai-memory-file-drift, llm-spend-cap-unverified, unauthenticated-cron, unauthenticated-webhook
+**v6.5–v7.8:** release notes moved to `prompts/PROMPT-HISTORY.md` (2026-11-09) to keep this file smaller for every scan agent. They are a record, not instructions: every rule they introduced is stated in the sections below.
 
 ## MODE DETECTION
 
@@ -1444,6 +1313,12 @@ node ~/.claude-sync/standards/check-standards.mjs . --json
   **never as a pass** — do not fill them in with your own reading.
 - A check marked `confidence: "medium"` that FAILS means *investigate*, not *proven broken*.
   Carry that nuance into any flag text.
+- **Doubt goes in a separate adjudication note, never into the pasted output.** Two assertions
+  are name-shaped and known to err: a repo whose data merely *describes* other apps'
+  notification code can score a false `fail`, and a real kill switch named `paused` /
+  `isNotificationsPaused` can score a false `kill-switch` fail. If you believe a result is one
+  of these, keep the script output verbatim and say why in one line under `## Security Notes`
+  (prose below the Active Flags table), citing `file:line`.
 
 **If the script is missing, errors, or exits 2:** emit `"standards": null` and add ONE flag
 `standards-check-unavailable` (P4) naming the error. **Do NOT substitute your own
@@ -1688,6 +1563,12 @@ After producing the JSON output, update or create a CLAUDE.md file in the projec
 
 ### MERGE RULES:
 
+**Stamp both SCAN:AUTO START markers** (CLAUDE.md and `docs/security-scan.md`) exactly as
+`Generated by security-scan-prompt {version from this prompt's title line} on {scan date}`,
+using the scan date the orchestrator gives you, else today's date. The runtime reads the version
+and date from these markers: a block without them, or one left from an earlier cycle, fails the
+integrity gate and is not published as freshly scanned.
+
 **Case 1 — No CLAUDE.md exists:**
 Create a new CLAUDE.md and supporting doc structure:
 
@@ -1705,14 +1586,14 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Current focus:** {leave blank for user to fill}
 - **Next:** Review scan findings and address any P1/P2 flags.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.1. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.9 on {YYYY-MM-DD}. Do not edit this section manually. -->
 
 ## Tech Stack
 
 | Layer | Tech |
 |---|---|
 | Frontend | {REQUIRED: framework + version + UI libs} |
-| Backend | {REQUIRED: server framework + runtime, or "None (client-side only)"} |
+| Backend | {REQUIRED: server framework + the **DEPLOYED** runtime, or "None (client-side only)". Source the runtime from `functions/package.json` `engines.node` (Firebase Cloud Functions) or root `package.json` `engines.node` — **never from `.nvmrc`**, which is the local dev toolchain, not a deployed runtime. If `.nvmrc` declares a different major, state the deployed runtime here and note the local toolchain separately (e.g. "Cloud Functions Node 20; local toolchain .nvmrc 22") — do not collapse them into one version.} |
 | Data | {REQUIRED: databases/caches/storage, or "None"} |
 | Auth | {REQUIRED: method, or "None"} |
 | Hosting | {REQUIRED: platform} |
@@ -1809,7 +1690,7 @@ Do not ask permission to run this protocol. Just run it.
 > The block below is rewritten every scan. Record accept/resolve decisions on the Watchtower dashboard,
 > or in a note ABOVE the SCAN:AUTO:START marker (I2 source 3), never inside the block.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.9. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.9 on {YYYY-MM-DD}. Do not edit this section manually. -->
 
 ## Security Notes
 
@@ -1840,7 +1721,7 @@ Do not ask permission to run this protocol. Just run it.
 
 - **Total lines:** {N — application code only (.js/.jsx/.ts/.tsx/.mjs/.cjs/.css/.html/.sql); no .json; node_modules/.next/dist/build/.git/.claude pruned}
 - **Components:** {N} | **Pages:** {N} | **API routes:** {N}
-- **Files over 500 lines:** {list with line counts, or "_None_"}
+- **Files over 1500 lines:** {list with line counts, or "_None_"}
 - **Repo:** {URL or "Local-only"} ({PUBLIC/PRIVATE/unknown})
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
@@ -1945,7 +1826,7 @@ The CLAUDE.md block must NOT contain `## Security Notes`, `## Deployed Surface`,
 1. `## Security Notes` containing `### Active Flags`, `### Watch List`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
 2. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
 3. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
-4. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version), plus the v7.9 Coverage line (not yet enforced by the validator)
+4. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 1500 lines, Repo, Production URL, Last commit scanned, Scan prompt version), plus the v7.9 Coverage line (not yet enforced by the validator)
 
 If ANY required heading is missing, ANY subheading is omitted, a moved section is still in CLAUDE.md, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the failing file's entire SCAN:AUTO block from scratch — do not patch. Do not output success until both blocks are structurally complete.
 
@@ -2305,6 +2186,296 @@ file does **not** suppress the comparison.
 Generalization: any check that compares **repo state to live state** inherits the repo's freshness.
 Treat clone freshness as a precondition of that whole class, the same way I1 treats live-catalog
 confirmation as a precondition for absence claims.
+
+### I14. An amplifier written INSIDE another finding vanishes when that finding is fixed (v7.7)
+
+Farm-Budget's P1 storage finding carried this clause in its own description: "Self-serve signup on
+this Supabase project is OPEN and unverified (`disable_signup:false`, `mailer_autoconfirm:true`), so
+anyone on the internet can mint an `authenticated` JWT." That sentence is what turned a
+cross-landlord leak into an internet-facing one. It was **not** a flag of its own.
+
+Verified live again on 2026-08-31 (`/auth/v1/settings`): still `disable_signup:false`,
+`mailer_autoconfirm:true`, `email:true`. The P1 it was attached to is now fixed. So on the next scan
+the amplifier disappears from the report entirely — while still applying to every other table,
+bucket and RPC on a Postgres project shared by Farm-Budget, farm-fin, Landowner-Portal and the
+`parts` schema.
+
+**Rule:** a precondition that raises the severity of a finding is a finding. Open/unverified signup,
+a disabled email-confirmation step, a permissive default role — each gets its OWN row with its own
+severity, and each is re-verified independently of whatever it was first noticed next to. Never let
+the fix for finding A silently retire the evidence for condition B.
+
+### I15. A shared-project advisor is not automatically a finding for the repo you are scanning (v7.7)
+
+`auth_leaked_password_protection` was reported against Farm-Budget at P2. Farm-Budget has no password
+auth path at all — `src/App.jsx:1658` is `signInWithOAuth`, and there is no `signInWithPassword`,
+`signUp` or password-reset call anywhere in the repo. The project has 2 password users; they belong
+to a sibling app on the same database.
+
+A Supabase advisor is a **project** fact. The scan reported it as a **repo** fact. It has been
+carried against the wrong app for cycles, which means it is both noise here and invisible wherever it
+actually applies.
+
+**Rule:** before attributing a project-level advisor to a repo, confirm that repo exercises the
+feature. If it does not, name the project and say which sibling app owns it — or emit it once at
+project scope. Same discipline as I9: a shared Postgres project is not a shared namespace, and it is
+not a shared blame surface either.
+
+### I16. Follow a shared resource to its CONSUMERS — they are usually in another repo (v7.7)
+
+The scan read the `documents` bucket policy, correctly called it unscoped, and stopped. It never
+asked the next question: *who reads this bucket, and what scopes them?*
+
+The answer was in a different repository. `Landowner-Portal/src/hooks/useFarmData.js` filters
+documents **in the browser** and hands them to `YieldMapsDocuments.jsx`, which calls
+`createSignedUrl` client-side. The storage policy was therefore the only server-side boundary, and a
+bare `bucket_id = 'documents'` also governs `list()` — so any authenticated user could enumerate the
+bucket and mint a URL for anything in it.
+
+**Rule:** for every shared resource (a storage bucket, a table, an RPC) that a scanned repo does not
+solely own, enumerate its consumers across the portfolio before scoring the policy. And treat
+client-side filtering as **presentation, never authorization** — if the only thing separating tenant
+A from tenant B is a `.filter()` in a React hook, that is a P1 regardless of how tidy the UI is.
+
+### I17. Read the control FLOW before scoring a weak control, and re-derive static facts each scan (v7.7)
+
+Two calibration errors in the same report:
+
+**Gate order.** The 4-digit PIN was scored P2 `weak-auth` with the reasoning that it is client-side
+and forgeable. Both true. But the report read as though the PIN were the perimeter. It is not:
+`src/App.jsx:12809` returns the Google sign-in screen (`if (!auth.user)`) and the PIN gate is not
+reached until `:12876` (`if (!pinOk)`). The order is OAuth **then** PIN — a deliberate two-prong
+login. The honest finding is much narrower: the PIN adds nothing against an attacker who already
+holds a valid Google session, and its real value is casual access on an unlocked device.
+
+**Stale static facts.** The report's summary line read "Upload: PDF only, 10 MB limit." The actual
+allow-list is PDF, CSV **and** XLSX, with a macro-workbook rejection path
+(`src/lib/uploadTypes.js:34-38`, `:92`). Flags built on a stale premise inherit the staleness.
+
+**Rule:** when a control looks weak, trace the surrounding control flow and state its position in the
+chain before assigning severity — "weak control layered behind a strong one" and "weak control
+standing alone" are different findings. And re-derive the summary facts from source every scan
+rather than carrying the previous cycle's prose forward.
+
+
+### I18. A `FOR ALL` policy with no `WITH CHECK` uses `USING` as its write check — grep this on every project (v7.7)
+
+Missed by every scan of Farm-Budget to date, and found only when Codex reviewed a
+*different* change. On `public.landlords`:
+
+```
+operator_manage_landlords | ALL | USING (operator_user_id = auth.uid()) | WITH CHECK: (none)
+```
+
+Postgres falls back to `USING` for the write check when an `ALL` policy omits `WITH CHECK`.
+So the only constraint on an INSERT was that the new row name the caller as its own
+operator. Nothing constrained the other columns — including `email` and `is_admin`.
+
+That table's `is_admin` column feeds `public.is_admin()`, which gates
+`farm_data.scoped_read` (`(auth.uid() = user_id) OR is_admin()`) and
+`landlords.admin_read_all_landlords`. Signup on the project is open and
+email-autoconfirmed. Chain it: sign up → insert ONE row naming yourself operator, with
+your own email and `is_admin = true` → you are an admin.
+
+Measured live inside a rolled-back transaction as a brand-new user: `farm_data` rows
+visible BEFORE the forged row **0**, AFTER **8** — the entire farm budget, plus all 6
+landlord records and all 17 landowner documents.
+
+**Why every prior scan missed it:** the scan read the policy, saw `auth.uid()` in the
+predicate, and scored it as scoped. `auth.uid()` in a *write* predicate proves the row
+points at you; it says nothing about which OTHER columns you may set. Scoping and
+privilege-granting are different questions.
+
+**Rules:**
+1. Enumerate every `FOR ALL` policy with a NULL `with_check` in `pg_policies`. Each is a
+   finding until shown otherwise — the write check is silently inherited from `USING`.
+2. For any table with a privilege-bearing column (`is_admin`, `role`, `tier`, `owner_id`,
+   `operator_user_id`, `plan`), ask specifically: **can a caller INSERT or UPDATE a row
+   that grants themselves that privilege?** A policy can be correctly row-scoped and still
+   be a privilege-escalation primitive.
+3. Trace every authorization helper (`is_admin()`, `has_role()`, `user_farm_ids()`) back to
+   the table it reads, then to the write policy on that table. A SECURITY DEFINER helper is
+   only as trustworthy as the weakest write path into its source data. `search_path`
+   hardening on the helper is irrelevant if the data it reads is caller-writable.
+4. Verify by attempting the escalation inside a transaction that ends in `RAISE` (which
+   rolls back the function's own writes), not by reading the policy text. The catalog says
+   what is allowed; only the attempt says what is reachable. **v7.9: owner-attended sessions
+   only.** A rollback does not undo external effects, so an unattended scan does not run it. Record the
+   unrun attempt as a verification limitation in the flag text, and as a `blocker` only when that
+   observation decides whether the finding exists (I19 rule 5).
+
+
+### I19. Candidates, then verdicts: how a structural match becomes a finding (v7.9)
+
+The 2026-11-07 cycle produced seven P1s. Codex challenged three. One of the three came back "DOWNGRADE
+TO P2." The other four P1s and all sixty P2s were never challenged by anyone who had not written them.
+Cloudflare's audit method gives every candidate to a fresh verifier with instructions to refute it from
+source. On the 2026-11-09 calibration run that pass rejected 5 of 8 candidates. This rule adopts it, and
+fixes how it composes with the rules already in this file.
+
+**1. Precedence.** Two stages, in this order:
+- **Candidate stage — the v7.1 DECISION POLICY.** A structural match, the check's FLAG condition met
+  by code you read, makes a candidate. Neither an exemption nor a trap is a verdict by itself.
+- **Verdict stage — this rule and I20.** Every candidate ends in exactly one status:
+  - **CONFIRMED** → emitted, at the severity the established facts support; placed by rule 4.
+  - **UNRESOLVED** → emitted to the Watch List with a `blocker`. Only when the unresolved fact decides whether the
+    vulnerability *exists*.
+  - **REJECTED** → no flag. Only with a citation that disproves the trace: a `{file:line}`, or a live
+    catalog fact gathered under rule 5 below.
+- **Clearing.** Cite the control, show it applies on the traced path, and show it defeats the
+  specific alleged failure. A listed guard clears only the failure it addresses; a check with several
+  failure dimensions clears only when each is disproved. An equivalent control may clear with the same
+  proof. A rationalization trap forbids the unsupported inference it states, not every use of the API
+  it names. "Probably handled elsewhere" and "seems safe" never clear.
+- Where this rule and a check's text disagree, this rule wins for the *status*, and the check wins for
+  *which code to look at*.
+
+**2. Existence versus impact.** Keep the two kinds of uncertainty apart.
+- Unknown whether the vulnerability exists (an advisory precondition, a live policy, a platform
+  behavior that decides reachability) → UNRESOLVED, Watch List, `blocker`.
+- Vulnerability established, but its *ceiling* unknown (how many tenants, whether a second org can
+  appear) → stays **CONFIRMED** at the severity the established facts support. Its output lane comes
+  from rule 4 alone; confirmation does not override provisional status or confidence placement. Record
+  the escalation condition as a tripwire in the flag text.
+- **Which rule sets severity under uncertainty.** I1 governs uncertainty about *unverified live
+  database state*: never lower a severity by assuming a deployed control or restriction you have not
+  read. I20 governs every other claim of impact: never raise a severity on an exploit or consequence
+  you have not traced. When a live fact keeps a finding at the higher tier, name that fact.
+- **Dependency CVEs keep their own table.** For an advisory that applies to the installed version,
+  `npm-cve-critical` / `npm-cve-high` severity comes from the REACHABILITY TIERS, not from I20:
+  reachable production P1, disproved production reachability P2, demonstrated dev/build-only P3. An
+  inconclusive production trace takes the higher tier. Missing reachability evidence does not turn an
+  applicable advisory into an UNRESOLVED existence finding or move it out of Active Flags; record the
+  reachability question and its blocker in the flag text. No flag only when the advisory does not
+  apply to the installed version. I2 dispositions still apply. If your impact analysis disagrees with
+  the tier, say so in the flag text; do not override the table.
+
+**3. Trace before you write a P1 or P2.** State the lower-trust entry point, each hop with
+`{file:line}`, the sink or effect, and the **strongest control on the path** — the best argument
+against your own finding. Name the strongest applicable control, or write "none found on the traced
+  path" with the locations you inspected. An UNRESOLVED finding may carry an explicitly incomplete
+  trace; never invent a control or a confirmed exploit to complete one.
+
+**4. Confidence, status and deduplication.**
+- Three separate properties. `verdict` (CONFIRMED or UNRESOLVED) is about this finding. PROVISIONAL is
+  a property of the *check* that produced it. `confidence` measures evidence strength. Record each on
+  its own, and never adjust one to change another.
+- **Placement.** Except for dependency CVEs (rule 2), findings from PROVISIONAL checks, UNRESOLVED
+  findings and findings below 0.8 confidence go to the Watch List; every other CONFIRMED finding goes
+  to Active Flags.
+- An UNRESOLVED item **with a named blocker** is recorded even below 0.7. The 0.7 floor still drops
+  speculation that names no blocker. Unresolved work is a deferral, not a pass (I8).
+- `blocker` and tripwires attach to the individual instance. Decide placement per instance before
+  grouping. Group only when category, severity, verdict, disposition and output lane all match, keep
+  each instance's evidence, blocker and tripwire in the text, and emit separate flags when one
+  confidence score cannot represent them all.
+
+**5. Settling a blocker live: what is allowed.** Before marking anything UNRESOLVED, try to settle it
+with a read-only observation, inside the access the scan already has for that project:
+- Allowed: catalog and configuration reads (`pg_policy` / `pg_policies`, `pg_class.relrowsecurity`,
+  `information_schema` grants, `pg_proc` **metadata**, trigger lists), the edge-function list and its
+  `verify_jwt` flags, the auth settings endpoint, and **bounded aggregates**: `count(*)`, filtered to
+  what the question needs, run in the **same explicit read-only transaction** as
+  `SET LOCAL statement_timeout = '5s'` (`BEGIN READ ONLY; SET LOCAL …; SELECT …; COMMIT;` in one call;
+  separate tool calls do not share the setting). A timeout bounds duration, not side effects. Before
+  aggregating an application table or view, establish from the catalog that the effective role, the
+  RLS predicates, view expansion and every function they reference run no application logic; if you
+  cannot, skip the aggregate.
+- Not allowed: selecting row contents, invoking any application function, RPC or view that runs app
+  logic, sending exploit payloads, or any write — including writes inside a transaction you intend to
+  roll back. A rollback does not undo external effects. **In unattended scans this overrides I18 rule
+  4.** An escalation attempt you did not run is a verification limitation, not automatically a
+  blocker: keep the finding CONFIRMED when source and catalog evidence establish it, and mark it
+  UNRESOLVED only when the missing observation decides existence. Owner attendance alone does not
+  authorize a mutation or remove external effects.
+- Select only the fields you need. A function definition can contain a secret; never paste one whole.
+- If these limits stop you, the item stays UNRESOLVED with its blocker.
+
+**6. Orchestrator: the refutation pass.** After structural validation, each project's P1 and P2 flags,
+with their traces, go to one fresh verifier that did not scan that project. One verifier per project,
+batched — not one per flag. The verifier also receives every I2 disposition source for that project:
+Accepted Risks, Resolved entries, exclusions and the suppression ledger. It does not re-raise an
+unchanged accepted issue within its accepted scope, and it applies I2's exceptions: changed facts,
+regressions and live re-verification. It returns `STANDS`,
+`DOWNGRADE <tier>`, `UNRESOLVED <blocker>` or `REJECT <citation>` per flag. Verdicts are **never
+applied automatically**: the scanner's verdict stands pending owner review, but every dispute is
+annotated visibly in the project report, the dashboard and the debrief, so nobody reads a contested
+flag as uncontested. Begin a disputed Active Flag's description with
+`DISPUTED: {VERDICT}[ {tier}]; owner review pending. ` (VERDICT is STANDS, DOWNGRADE, UNRESOLVED or
+REJECT; tier only for DOWNGRADE). `scans/write_scan_jsons.py` strips that marker from the text and
+records it as the flag's structured `refutation` field, which the dashboard shows as a "disputed"
+badge. Confirm `refutation` appears on that flag in the scan JSON and in `data/apps.js` before
+saying the dispute was published. The full rationale stays in the project report and the debrief. The owner decides, as with Codex disagreements. Codex remains the cross-vendor check on
+net-new P1s.
+
+### I20. Severity describes the impact the evidence establishes, not the worst case it resembles (v7.9)
+
+This rule sets severity for judgment findings. It does not override the dependency-CVE tier table or
+the fixed tiers of the taxonomy's hygiene keys (`missing-csp`, `missing-hsts`, `missing-x-frame`, and
+so on).
+
+Three inflation moves, each forbidden:
+- **A crash is not an outage.** Name the failure mechanism and the runtime's real concurrency model,
+  then say who else is affected. Do not infer isolation from "serverless": Vercel Fluid Compute runs
+  concurrent invocations in one instance, so a CPU spin or a process-level crash can hit other users'
+  requests. A crash confined to one request is a single-request availability bug. One that pins a
+  shared instance, kills a long-running process, poisons a cache entry or stalls a queue is shared
+  availability loss. Say which, and why.
+- **A same-principal action is not privilege gain.** A user changing, deleting or exporting data they
+  are already entitled to is not an escalation, however alarming the route name.
+- **A crash is not code execution, and a read is not a write.** Name the strongest result the evidence
+  shows and stop there.
+
+**What a judgment-based P1 needs** (at least one): crossing a trust boundary — unauthenticated → data,
+user → another user or tenant, user → admin, or a secret leaving its holder — **or** severe shared
+availability loss, **or** spending the operator's money without a working bound. These are necessary,
+not sufficient. Crossing a boundary does not force P1; apply the category's severity guidance and the
+demonstrated sensitivity, scope and consequence (a stored-URL scheme across users is P2 by its check).
+
+**A missing best practice with no affected principal or resource is not a finding.** If you cannot
+name who is harmed and what they lose, it is a hardening note: P4 at most, never P1–P3.
+
+### I21. Score the weakest path to an operation, and say which entry points you read (v7.9)
+
+A protected operation usually has more than one door: the route the UI calls, a server action added
+later, a Supabase RPC, the table itself through the RLS client, a cron or webhook, an edge function, a
+second HTTP method on the same route file. A scan that reads the front door has scored the strongest
+path, not the system.
+
+1. **Build one operation inventory per project, once, and reuse it across every check.** Count each
+   HTTP method of each route handler separately — a `route.ts` exporting `POST` and `DELETE` is two
+   entry points. Count every externally invocable server action, including inline `'use server'`
+   functions; each exposed callable RPC; each edge function and Cloud Function entry point; and each
+   direct database operation a client can perform on an exposed table, view or Firestore collection,
+   with read, create, update and delete authorization tracked separately. Include event-triggered
+   paths (database triggers, Firestore triggers, webhooks) whose triggering write an attacker can cause.
+   Track storage buckets as *resources* with their operation-specific policies, not as entry points.
+2. **Compare paths that implement the same effect under the same entitlement.** A public catalog read
+   and an admin price update touch the same table and rightly differ; that is not a gap. Two paths
+   that both unlink a receipt and differ in authorization are. Score the weakest, and name the others
+   in the flag text so the fix covers all of them (this extends I10 from "every instance of a pattern"
+   to "every path to an operation").
+3. **A session check authenticates; it does not authorize.** For every privileged effect, find the
+   authorization — ownership, membership, role, or a resource policy — and cite it. Building a
+   service-role client neither proves nor disproves scoping: a later `.eq('owner_id', user.id)` can
+   scope it correctly. But where the only check before a service-role write is "a session exists,"
+   ask who holds a session without the entitlement. Two common answers: anyone, when self-signup is
+   open; and every **removed** member, whose account and session outlive the deleted membership row and
+   who already knows the record ids.
+4. **Coverage line.** In `## Metrics` of `docs/security-scan.md`, record per kind: entry points whose
+   authorization you traced, out of those found — "methods 31/33 · server actions 4/4 · RPCs 3/6 ·
+   edge functions 2/2 · table ops 40/52 · triggers 3/3 · buckets 2/2 (policies read)." List the
+   untraced ones and why, and any kind you could not enumerate. "Read in full"
+   means the handler *and* the middleware, helpers and effective policies it relies on. Untraced is
+   not passed (I8), and a clean result with most entry points untraced must say so in the Strengths
+   line rather than letting "0 P1" stand alone.
+
+Worked example (receiptstack, 2026-11-09 calibration). `src/app/api/match/route.ts` exports `POST`,
+which links a receipt through the user's RLS client and is correctly scoped, and `DELETE` (`:56-97`),
+which checks only for a session, then deletes the link and resets `match_status` through the service
+role. Prior scans read the POST path and passed the operation. Both principals from rule 3 were live:
+signup was open, and a bounded aggregate (`auth.users` with no `organization_users` row, not deleted,
+not banned) returned 1 account.
 
 ## FLAG OUTPUT RULES
 
@@ -2961,13 +3132,10 @@ Placement (v7.9 I19 rule 4): flags from PROVISIONAL checks, UNRESOLVED flags and
 
 ## ACCEPTED RISK PRESERVATION
 
-When scanning a project that has an existing CLAUDE.md:
-- Check the Accepted Risks section for previously accepted flags (in docs/security-scan.md from v7.8; in CLAUDE.md for a project not yet migrated — see I2 source 1)
-- If a flag category was previously accepted and the code has not changed, preserve status as "accepted" with original justification
-- New flags always start as "active"
-- Do not re-flag accepted risks unless the code materially changed
-
----
+Governed by SCAN INTEGRITY RULE **I2**: read Accepted Risks / Resolved from the block, the DISPOSITION
+LEDGER and owner notes; match on the underlying issue, never on the category key alone. (This section
+used to say "if a flag category was previously accepted, preserve" -- the category-level matching I2
+rejects. Removed 2026-11-09.)
 
 ## CI/CD PIPELINE SECURITY
 
@@ -3157,296 +3325,6 @@ Generate project-specific guardrails from scan flags:
 - No .prettierrc or prettier config in package.json → do NOT emit formatting-inconsistency (we only flag failing checks against an intended style, not absence of one). Note `prettierConfigFound: false` in the metrics instead.
 - P1/P2 flags with exploit text → include the exploit scenario in the Active Flags table description
 - Flags with confidence below 0.8 → list under a 'Watch List' subsection instead of Active Flags
-
-### I14. An amplifier written INSIDE another finding vanishes when that finding is fixed (v7.7)
-
-Farm-Budget's P1 storage finding carried this clause in its own description: "Self-serve signup on
-this Supabase project is OPEN and unverified (`disable_signup:false`, `mailer_autoconfirm:true`), so
-anyone on the internet can mint an `authenticated` JWT." That sentence is what turned a
-cross-landlord leak into an internet-facing one. It was **not** a flag of its own.
-
-Verified live again on 2026-08-31 (`/auth/v1/settings`): still `disable_signup:false`,
-`mailer_autoconfirm:true`, `email:true`. The P1 it was attached to is now fixed. So on the next scan
-the amplifier disappears from the report entirely — while still applying to every other table,
-bucket and RPC on a Postgres project shared by Farm-Budget, farm-fin, Landowner-Portal and the
-`parts` schema.
-
-**Rule:** a precondition that raises the severity of a finding is a finding. Open/unverified signup,
-a disabled email-confirmation step, a permissive default role — each gets its OWN row with its own
-severity, and each is re-verified independently of whatever it was first noticed next to. Never let
-the fix for finding A silently retire the evidence for condition B.
-
-### I15. A shared-project advisor is not automatically a finding for the repo you are scanning (v7.7)
-
-`auth_leaked_password_protection` was reported against Farm-Budget at P2. Farm-Budget has no password
-auth path at all — `src/App.jsx:1658` is `signInWithOAuth`, and there is no `signInWithPassword`,
-`signUp` or password-reset call anywhere in the repo. The project has 2 password users; they belong
-to a sibling app on the same database.
-
-A Supabase advisor is a **project** fact. The scan reported it as a **repo** fact. It has been
-carried against the wrong app for cycles, which means it is both noise here and invisible wherever it
-actually applies.
-
-**Rule:** before attributing a project-level advisor to a repo, confirm that repo exercises the
-feature. If it does not, name the project and say which sibling app owns it — or emit it once at
-project scope. Same discipline as I9: a shared Postgres project is not a shared namespace, and it is
-not a shared blame surface either.
-
-### I16. Follow a shared resource to its CONSUMERS — they are usually in another repo (v7.7)
-
-The scan read the `documents` bucket policy, correctly called it unscoped, and stopped. It never
-asked the next question: *who reads this bucket, and what scopes them?*
-
-The answer was in a different repository. `Landowner-Portal/src/hooks/useFarmData.js` filters
-documents **in the browser** and hands them to `YieldMapsDocuments.jsx`, which calls
-`createSignedUrl` client-side. The storage policy was therefore the only server-side boundary, and a
-bare `bucket_id = 'documents'` also governs `list()` — so any authenticated user could enumerate the
-bucket and mint a URL for anything in it.
-
-**Rule:** for every shared resource (a storage bucket, a table, an RPC) that a scanned repo does not
-solely own, enumerate its consumers across the portfolio before scoring the policy. And treat
-client-side filtering as **presentation, never authorization** — if the only thing separating tenant
-A from tenant B is a `.filter()` in a React hook, that is a P1 regardless of how tidy the UI is.
-
-### I17. Read the control FLOW before scoring a weak control, and re-derive static facts each scan (v7.7)
-
-Two calibration errors in the same report:
-
-**Gate order.** The 4-digit PIN was scored P2 `weak-auth` with the reasoning that it is client-side
-and forgeable. Both true. But the report read as though the PIN were the perimeter. It is not:
-`src/App.jsx:12809` returns the Google sign-in screen (`if (!auth.user)`) and the PIN gate is not
-reached until `:12876` (`if (!pinOk)`). The order is OAuth **then** PIN — a deliberate two-prong
-login. The honest finding is much narrower: the PIN adds nothing against an attacker who already
-holds a valid Google session, and its real value is casual access on an unlocked device.
-
-**Stale static facts.** The report's summary line read "Upload: PDF only, 10 MB limit." The actual
-allow-list is PDF, CSV **and** XLSX, with a macro-workbook rejection path
-(`src/lib/uploadTypes.js:34-38`, `:92`). Flags built on a stale premise inherit the staleness.
-
-**Rule:** when a control looks weak, trace the surrounding control flow and state its position in the
-chain before assigning severity — "weak control layered behind a strong one" and "weak control
-standing alone" are different findings. And re-derive the summary facts from source every scan
-rather than carrying the previous cycle's prose forward.
-
-
-### I18. A `FOR ALL` policy with no `WITH CHECK` uses `USING` as its write check — grep this on every project (v7.7)
-
-Missed by every scan of Farm-Budget to date, and found only when Codex reviewed a
-*different* change. On `public.landlords`:
-
-```
-operator_manage_landlords | ALL | USING (operator_user_id = auth.uid()) | WITH CHECK: (none)
-```
-
-Postgres falls back to `USING` for the write check when an `ALL` policy omits `WITH CHECK`.
-So the only constraint on an INSERT was that the new row name the caller as its own
-operator. Nothing constrained the other columns — including `email` and `is_admin`.
-
-That table's `is_admin` column feeds `public.is_admin()`, which gates
-`farm_data.scoped_read` (`(auth.uid() = user_id) OR is_admin()`) and
-`landlords.admin_read_all_landlords`. Signup on the project is open and
-email-autoconfirmed. Chain it: sign up → insert ONE row naming yourself operator, with
-your own email and `is_admin = true` → you are an admin.
-
-Measured live inside a rolled-back transaction as a brand-new user: `farm_data` rows
-visible BEFORE the forged row **0**, AFTER **8** — the entire farm budget, plus all 6
-landlord records and all 17 landowner documents.
-
-**Why every prior scan missed it:** the scan read the policy, saw `auth.uid()` in the
-predicate, and scored it as scoped. `auth.uid()` in a *write* predicate proves the row
-points at you; it says nothing about which OTHER columns you may set. Scoping and
-privilege-granting are different questions.
-
-**Rules:**
-1. Enumerate every `FOR ALL` policy with a NULL `with_check` in `pg_policies`. Each is a
-   finding until shown otherwise — the write check is silently inherited from `USING`.
-2. For any table with a privilege-bearing column (`is_admin`, `role`, `tier`, `owner_id`,
-   `operator_user_id`, `plan`), ask specifically: **can a caller INSERT or UPDATE a row
-   that grants themselves that privilege?** A policy can be correctly row-scoped and still
-   be a privilege-escalation primitive.
-3. Trace every authorization helper (`is_admin()`, `has_role()`, `user_farm_ids()`) back to
-   the table it reads, then to the write policy on that table. A SECURITY DEFINER helper is
-   only as trustworthy as the weakest write path into its source data. `search_path`
-   hardening on the helper is irrelevant if the data it reads is caller-writable.
-4. Verify by attempting the escalation inside a transaction that ends in `RAISE` (which
-   rolls back the function's own writes), not by reading the policy text. The catalog says
-   what is allowed; only the attempt says what is reachable. **v7.9: owner-attended sessions
-   only.** A rollback does not undo external effects, so an unattended scan does not run it. Record the
-   unrun attempt as a verification limitation in the flag text, and as a `blocker` only when that
-   observation decides whether the finding exists (I19 rule 5).
-
-
-### I19. Candidates, then verdicts: how a structural match becomes a finding (v7.9)
-
-The 2026-11-07 cycle produced seven P1s. Codex challenged three. One of the three came back "DOWNGRADE
-TO P2." The other four P1s and all sixty P2s were never challenged by anyone who had not written them.
-Cloudflare's audit method gives every candidate to a fresh verifier with instructions to refute it from
-source. On the 2026-11-09 calibration run that pass rejected 5 of 8 candidates. This rule adopts it, and
-fixes how it composes with the rules already in this file.
-
-**1. Precedence.** Two stages, in this order:
-- **Candidate stage — the v7.1 DECISION POLICY.** A structural match, the check's FLAG condition met
-  by code you read, makes a candidate. Neither an exemption nor a trap is a verdict by itself.
-- **Verdict stage — this rule and I20.** Every candidate ends in exactly one status:
-  - **CONFIRMED** → emitted, at the severity the established facts support; placed by rule 4.
-  - **UNRESOLVED** → emitted to the Watch List with a `blocker`. Only when the unresolved fact decides whether the
-    vulnerability *exists*.
-  - **REJECTED** → no flag. Only with a citation that disproves the trace: a `{file:line}`, or a live
-    catalog fact gathered under rule 5 below.
-- **Clearing.** Cite the control, show it applies on the traced path, and show it defeats the
-  specific alleged failure. A listed guard clears only the failure it addresses; a check with several
-  failure dimensions clears only when each is disproved. An equivalent control may clear with the same
-  proof. A rationalization trap forbids the unsupported inference it states, not every use of the API
-  it names. "Probably handled elsewhere" and "seems safe" never clear.
-- Where this rule and a check's text disagree, this rule wins for the *status*, and the check wins for
-  *which code to look at*.
-
-**2. Existence versus impact.** Keep the two kinds of uncertainty apart.
-- Unknown whether the vulnerability exists (an advisory precondition, a live policy, a platform
-  behavior that decides reachability) → UNRESOLVED, Watch List, `blocker`.
-- Vulnerability established, but its *ceiling* unknown (how many tenants, whether a second org can
-  appear) → stays **CONFIRMED** at the severity the established facts support. Its output lane comes
-  from rule 4 alone; confirmation does not override provisional status or confidence placement. Record
-  the escalation condition as a tripwire in the flag text.
-- **Which rule sets severity under uncertainty.** I1 governs uncertainty about *unverified live
-  database state*: never lower a severity by assuming a deployed control or restriction you have not
-  read. I20 governs every other claim of impact: never raise a severity on an exploit or consequence
-  you have not traced. When a live fact keeps a finding at the higher tier, name that fact.
-- **Dependency CVEs keep their own table.** For an advisory that applies to the installed version,
-  `npm-cve-critical` / `npm-cve-high` severity comes from the REACHABILITY TIERS, not from I20:
-  reachable production P1, disproved production reachability P2, demonstrated dev/build-only P3. An
-  inconclusive production trace takes the higher tier. Missing reachability evidence does not turn an
-  applicable advisory into an UNRESOLVED existence finding or move it out of Active Flags; record the
-  reachability question and its blocker in the flag text. No flag only when the advisory does not
-  apply to the installed version. I2 dispositions still apply. If your impact analysis disagrees with
-  the tier, say so in the flag text; do not override the table.
-
-**3. Trace before you write a P1 or P2.** State the lower-trust entry point, each hop with
-`{file:line}`, the sink or effect, and the **strongest control on the path** — the best argument
-against your own finding. Name the strongest applicable control, or write "none found on the traced
-  path" with the locations you inspected. An UNRESOLVED finding may carry an explicitly incomplete
-  trace; never invent a control or a confirmed exploit to complete one.
-
-**4. Confidence, status and deduplication.**
-- Three separate properties. `verdict` (CONFIRMED or UNRESOLVED) is about this finding. PROVISIONAL is
-  a property of the *check* that produced it. `confidence` measures evidence strength. Record each on
-  its own, and never adjust one to change another.
-- **Placement.** Except for dependency CVEs (rule 2), findings from PROVISIONAL checks, UNRESOLVED
-  findings and findings below 0.8 confidence go to the Watch List; every other CONFIRMED finding goes
-  to Active Flags.
-- An UNRESOLVED item **with a named blocker** is recorded even below 0.7. The 0.7 floor still drops
-  speculation that names no blocker. Unresolved work is a deferral, not a pass (I8).
-- `blocker` and tripwires attach to the individual instance. Decide placement per instance before
-  grouping. Group only when category, severity, verdict, disposition and output lane all match, keep
-  each instance's evidence, blocker and tripwire in the text, and emit separate flags when one
-  confidence score cannot represent them all.
-
-**5. Settling a blocker live: what is allowed.** Before marking anything UNRESOLVED, try to settle it
-with a read-only observation, inside the access the scan already has for that project:
-- Allowed: catalog and configuration reads (`pg_policy` / `pg_policies`, `pg_class.relrowsecurity`,
-  `information_schema` grants, `pg_proc` **metadata**, trigger lists), the edge-function list and its
-  `verify_jwt` flags, the auth settings endpoint, and **bounded aggregates**: `count(*)`, filtered to
-  what the question needs, run in the **same explicit read-only transaction** as
-  `SET LOCAL statement_timeout = '5s'` (`BEGIN READ ONLY; SET LOCAL …; SELECT …; COMMIT;` in one call;
-  separate tool calls do not share the setting). A timeout bounds duration, not side effects. Before
-  aggregating an application table or view, establish from the catalog that the effective role, the
-  RLS predicates, view expansion and every function they reference run no application logic; if you
-  cannot, skip the aggregate.
-- Not allowed: selecting row contents, invoking any application function, RPC or view that runs app
-  logic, sending exploit payloads, or any write — including writes inside a transaction you intend to
-  roll back. A rollback does not undo external effects. **In unattended scans this overrides I18 rule
-  4.** An escalation attempt you did not run is a verification limitation, not automatically a
-  blocker: keep the finding CONFIRMED when source and catalog evidence establish it, and mark it
-  UNRESOLVED only when the missing observation decides existence. Owner attendance alone does not
-  authorize a mutation or remove external effects.
-- Select only the fields you need. A function definition can contain a secret; never paste one whole.
-- If these limits stop you, the item stays UNRESOLVED with its blocker.
-
-**6. Orchestrator: the refutation pass.** After structural validation, each project's P1 and P2 flags,
-with their traces, go to one fresh verifier that did not scan that project. One verifier per project,
-batched — not one per flag. The verifier also receives every I2 disposition source for that project:
-Accepted Risks, Resolved entries, exclusions and the suppression ledger. It does not re-raise an
-unchanged accepted issue within its accepted scope, and it applies I2's exceptions: changed facts,
-regressions and live re-verification. It returns `STANDS`,
-`DOWNGRADE <tier>`, `UNRESOLVED <blocker>` or `REJECT <citation>` per flag. Verdicts are **never
-applied automatically**: the scanner's verdict stands pending owner review, but every dispute is
-annotated visibly in the project report, the dashboard and the debrief, so nobody reads a contested
-flag as uncontested. Begin a disputed Active Flag's description with
-`DISPUTED: {VERDICT}[ {tier}]; owner review pending. ` (VERDICT is STANDS, DOWNGRADE, UNRESOLVED or
-REJECT; tier only for DOWNGRADE). `scans/write_scan_jsons.py` strips that marker from the text and
-records it as the flag's structured `refutation` field, which the dashboard shows as a "disputed"
-badge. Confirm `refutation` appears on that flag in the scan JSON and in `data/apps.js` before
-saying the dispute was published. The full rationale stays in the project report and the debrief. The owner decides, as with Codex disagreements. Codex remains the cross-vendor check on
-net-new P1s.
-
-### I20. Severity describes the impact the evidence establishes, not the worst case it resembles (v7.9)
-
-This rule sets severity for judgment findings. It does not override the dependency-CVE tier table or
-the fixed tiers of the taxonomy's hygiene keys (`missing-csp`, `missing-hsts`, `missing-x-frame`, and
-so on).
-
-Three inflation moves, each forbidden:
-- **A crash is not an outage.** Name the failure mechanism and the runtime's real concurrency model,
-  then say who else is affected. Do not infer isolation from "serverless": Vercel Fluid Compute runs
-  concurrent invocations in one instance, so a CPU spin or a process-level crash can hit other users'
-  requests. A crash confined to one request is a single-request availability bug. One that pins a
-  shared instance, kills a long-running process, poisons a cache entry or stalls a queue is shared
-  availability loss. Say which, and why.
-- **A same-principal action is not privilege gain.** A user changing, deleting or exporting data they
-  are already entitled to is not an escalation, however alarming the route name.
-- **A crash is not code execution, and a read is not a write.** Name the strongest result the evidence
-  shows and stop there.
-
-**What a judgment-based P1 needs** (at least one): crossing a trust boundary — unauthenticated → data,
-user → another user or tenant, user → admin, or a secret leaving its holder — **or** severe shared
-availability loss, **or** spending the operator's money without a working bound. These are necessary,
-not sufficient. Crossing a boundary does not force P1; apply the category's severity guidance and the
-demonstrated sensitivity, scope and consequence (a stored-URL scheme across users is P2 by its check).
-
-**A missing best practice with no affected principal or resource is not a finding.** If you cannot
-name who is harmed and what they lose, it is a hardening note: P4 at most, never P1–P3.
-
-### I21. Score the weakest path to an operation, and say which entry points you read (v7.9)
-
-A protected operation usually has more than one door: the route the UI calls, a server action added
-later, a Supabase RPC, the table itself through the RLS client, a cron or webhook, an edge function, a
-second HTTP method on the same route file. A scan that reads the front door has scored the strongest
-path, not the system.
-
-1. **Build one operation inventory per project, once, and reuse it across every check.** Count each
-   HTTP method of each route handler separately — a `route.ts` exporting `POST` and `DELETE` is two
-   entry points. Count every externally invocable server action, including inline `'use server'`
-   functions; each exposed callable RPC; each edge function and Cloud Function entry point; and each
-   direct database operation a client can perform on an exposed table, view or Firestore collection,
-   with read, create, update and delete authorization tracked separately. Include event-triggered
-   paths (database triggers, Firestore triggers, webhooks) whose triggering write an attacker can cause.
-   Track storage buckets as *resources* with their operation-specific policies, not as entry points.
-2. **Compare paths that implement the same effect under the same entitlement.** A public catalog read
-   and an admin price update touch the same table and rightly differ; that is not a gap. Two paths
-   that both unlink a receipt and differ in authorization are. Score the weakest, and name the others
-   in the flag text so the fix covers all of them (this extends I10 from "every instance of a pattern"
-   to "every path to an operation").
-3. **A session check authenticates; it does not authorize.** For every privileged effect, find the
-   authorization — ownership, membership, role, or a resource policy — and cite it. Building a
-   service-role client neither proves nor disproves scoping: a later `.eq('owner_id', user.id)` can
-   scope it correctly. But where the only check before a service-role write is "a session exists,"
-   ask who holds a session without the entitlement. Two common answers: anyone, when self-signup is
-   open; and every **removed** member, whose account and session outlive the deleted membership row and
-   who already knows the record ids.
-4. **Coverage line.** In `## Metrics` of `docs/security-scan.md`, record per kind: entry points whose
-   authorization you traced, out of those found — "methods 31/33 · server actions 4/4 · RPCs 3/6 ·
-   edge functions 2/2 · table ops 40/52 · triggers 3/3 · buckets 2/2 (policies read)." List the
-   untraced ones and why, and any kind you could not enumerate. "Read in full"
-   means the handler *and* the middleware, helpers and effective policies it relies on. Untraced is
-   not passed (I8), and a clean result with most entry points untraced must say so in the Strengths
-   line rather than letting "0 P1" stand alone.
-
-Worked example (receiptstack, 2026-11-09 calibration). `src/app/api/match/route.ts` exports `POST`,
-which links a receipt through the user's RLS client and is correctly scoped, and `DELETE` (`:56-97`),
-which checks only for a session, then deletes the link and resets `match_status` through the service
-role. Prior scans read the POST path and passed the operation. Both principals from rule 3 were live:
-signup was open, and a bounded aggregate (`auth.users` with no `organization_users` row, not deleted,
-not banned) returned 1 account.
 
 If flags array is empty, use []
 ```

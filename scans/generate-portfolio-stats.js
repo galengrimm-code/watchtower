@@ -28,7 +28,8 @@ const out = { version: 1, generated: new Date().toISOString().slice(0, 10), byNa
 
 // --- Flag burndown over time ---
 function computeBurndown() {
-  const files = fs.readdirSync(SCANS_DIR).filter(f => /-\d{4}-\d{2}-\d{2}\.json$/.test(f));
+  // integrity-failure-<date>.json matches the date pattern but is not a project scan.
+  const files = fs.readdirSync(SCANS_DIR).filter(f => /-\d{4}-\d{2}-\d{2}\.json$/.test(f) && !f.startsWith('integrity-'));
   const byDate = {};
   for (const f of files) {
     const m = f.match(/-(\d{4}-\d{2}-\d{2})\.json$/);
@@ -169,7 +170,8 @@ out.burndown = computeBurndown();
 // category was first seen on date X, that's its firstSeen even if it briefly
 // dropped off a scan between X and now.
 function computeFlagAges() {
-  const files = fs.readdirSync(SCANS_DIR).filter(f => /-\d{4}-\d{2}-\d{2}\.json$/.test(f));
+  // integrity-failure-<date>.json matches the date pattern but is not a project scan.
+  const files = fs.readdirSync(SCANS_DIR).filter(f => /-\d{4}-\d{2}-\d{2}\.json$/.test(f) && !f.startsWith('integrity-'));
   files.sort((a, b) => {
     const da = a.match(/(\d{4}-\d{2}-\d{2})/)[1];
     const db = b.match(/(\d{4}-\d{2}-\d{2})/)[1];

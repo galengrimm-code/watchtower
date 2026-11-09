@@ -670,6 +670,44 @@ def prior_scan_date(slug):
     return best
 
 
+def scanned_on(scan):
+    """The date this project was actually scanned: the block's own START-marker date
+    (blockDate, from write_scan_jsons.py) when it is older than the cycle, else the
+    cycle date. A block left over from an earlier cycle must not read "(0d)" on Scan
+    Status. A later blockDate (a run that crossed midnight) still files under the cycle.
+    """
+    bd = scan.get("blockDate")
+    return bd if bd and bd < SCAN_DATE else SCAN_DATE
+
+
+def require_integrity_pass(only_slug):
+    """Refuse to publish a cycle the B.6 gate failed or never passed.
+
+    "On exit 1, STOP. Do not run phase_c_update.py" used to be a sentence in the
+    scheduled skill, enforced only by an agent reading it. A failure file blocks
+    every merge for the date. A full-portfolio merge also needs the gate's pass
+    stamp, written after every scan JSON for the date; a JSON rewritten after the
+    gate ran (write_scan_jsons.py re-run without re-gating) is refused too. A
+    --only-slug one-off merge does not need the stamp: the one-off runbook has no
+    gate, and it touches one entry.
+    """
+    failure = SCANS / f"integrity-failure-{SCAN_DATE}.json"
+    if failure.exists():
+        sys.exit(f"REFUSED: {failure.name} exists -- the integrity gate failed this cycle. "
+                 f"Fix the failures, re-run verify_scan_integrity.py, then merge.")
+    if only_slug:
+        return
+    stamp = SCANS / f"integrity-pass-{SCAN_DATE}.stamp"
+    if not stamp.exists():
+        sys.exit(f"REFUSED: no {stamp.name}. Run verify_scan_integrity.py --date {SCAN_DATE} "
+                 f"and merge only if it exits 0.")
+    newer = [p.name for p in SCANS.glob(f"*-{SCAN_DATE}.json")
+             if not p.name.startswith("integrity-") and p.stat().st_mtime > stamp.stat().st_mtime]
+    if newer:
+        sys.exit(f"REFUSED: {len(newer)} scan file(s) changed after the gate passed "
+                 f"({', '.join(sorted(newer)[:4])}). Re-run verify_scan_integrity.py.")
+
+
 def update_app(obj_text, scan, app_name, prior_scanned=None):
     """Update an existing app object literal with scan data.
 
@@ -689,7 +727,7 @@ def update_app(obj_text, scan, app_name, prior_scanned=None):
     obj_text = replace_top_level_field(obj_text, "lastUpdated", jstr(SCAN_DATE))
 
     # 3) lastScanned (keep in sync; existing files use lastScanned)
-    obj_text = replace_top_level_field(obj_text, "lastScanned", jstr(SCAN_DATE))
+    obj_text = replace_top_level_field(obj_text, "lastScanned", jstr(scanned_on(scan)))
 
     # 4) scanVersion
     obj_text = replace_top_level_field(obj_text, "scanVersion", jstr(SCAN_VERSION))
@@ -798,7 +836,7 @@ def make_new_app_entry(scan, app_name, category, description, completion=None, n
     if scan.get("repoUrl"):
         lines.append(f"    repoUrl: {jstr(scan['repoUrl'])},")
     lines.append(f"    lastUpdated: {jstr(SCAN_DATE)},")
-    lines.append(f"    lastScanned: {jstr(SCAN_DATE)},")
+    lines.append(f"    lastScanned: {jstr(scanned_on(scan))},")
     lines.append(f"    scanVersion: {jstr(SCAN_VERSION)},")
     tech = js_tech(scan)
     if tech:
@@ -836,6 +874,7 @@ def main():
     config = load_config()
     SCAN_VERSION = detect_scan_version(resolve_prompt_path(config))
     print(f"Phase C update: date={SCAN_DATE}, scan version={SCAN_VERSION}")
+    require_integrity_pass(args.only_slug)
     # slug -> displayName for all configured projects. None = "needs a new entry"
     # only for slugs in the legacy SLUG_TO_APP_NAME set (kept below for backward compat).
     SLUG_TO_APP_NAME = {p["slug"]: p["displayName"] for p in config["projects"]}

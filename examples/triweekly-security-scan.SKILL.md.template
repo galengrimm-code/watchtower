@@ -186,6 +186,19 @@ Produce a final validation summary in the Phase D commit message body:
 Validation: N/M projects passed structural validation on first attempt, X retries required, Y projects still failing (listed below).
 ```
 
+## Phase B.6 — Integrity gate (REQUIRED before Phase C)
+
+```
+python "<watchtowerRoot>/scans/verify_scan_integrity.py" --date <YYYY-MM-DD>
+```
+
+Exit `0` writes `scans/integrity-pass-<date>.stamp`. Exit `1` writes
+`scans/integrity-failure-<date>.json` and the cycle must not be published: fix the cause, re-run the
+gate, then continue. `phase_c_update.py` enforces this itself. It refuses a full merge without the
+stamp, while a failure file exists, or when a scan JSON for the date changed after the stamp (re-run
+the gate after any `write_scan_jsons.py` re-run). A5/A8 read each block's own version and date from
+its SCAN:AUTO START marker, so tell every Phase B agent the cycle date to stamp there.
+
 ## Phase B.7 — Codex adversarial pass (optional)
 
 After Phase B.5 validates structure, optionally run a focused Codex second-opinion pass. The /codex skill is an OpenAI Codex CLI wrapper; it bills to your ChatGPT subscription (no per-call cost) and has three modes: review, challenge, consult. Skip this entire phase if you don't have /codex installed.

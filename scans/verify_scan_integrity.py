@@ -27,6 +27,14 @@ is built to catch, including the next instance of it that isn't listed below.
   A7  flag table missing The v7.8 split moved Active Flags to docs/security-scan.md.
                          A reader looking only at CLAUDE.md finds no table, parses 0,
                          and A3 passes 0 == 0: an all-clear for every project.
+  A8  block freshness    (2026-11-09) A project whose agent silently failed kept last
+                         cycle's block and was published dated today. A5 compared the
+                         prompt header with a value stamped from that same header and
+                         could not fail. A5 now reads the block's own version and A8
+                         its own date, both from the SCAN:AUTO START marker.
+
+On exit 0 the gate writes scans/integrity-pass-<date>.stamp; phase_c_update.py
+refuses a full-portfolio merge without it.
 
 A4 is WARN, not FAIL, on purpose. Line counts move for boring reasons (a new
 lockfile, a vendored catalog, an .gitignore change). A gate that cries wolf gets
@@ -388,20 +396,81 @@ def check_scan_version(res, active, scan_date, expected):
     if not expected:
         res.warn("A5 version drift", "could not read a version from the prompt; check skipped")
         return
+    # Compares the version each BLOCK says it was written with (blockVersion, parsed
+    # from its START marker), not scanVersion. scanVersion is stamped from this same
+    # prompt header, so comparing it here was a check that could not fail (N6).
     bad = []
     for proj in active:
         path = SCANS_DIR / f"{proj['slug']}-{scan_date}.json"
         if not path.exists():
             continue
-        got = json.loads(path.read_text(encoding="utf-8")).get("scanVersion")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if "blockVersion" not in data:
+            bad.append(f"{proj['slug']}=<no blockVersion: pre-2026-11-09 writer, re-run write_scan_jsons.py>")
+            continue
+        got = data["blockVersion"]
         if got != expected:
             bad.append(f"{proj['slug']}={got!r}")
     if bad:
         res.fail("A5 version drift",
-                 f"prompt is {expected} but files disagree: {bad[:6]}"
+                 f"prompt is {expected} but blocks were written by: {bad[:6]}"
                  + (f" (+{len(bad)-6} more)" if len(bad) > 6 else ""))
     else:
-        res.ok("A5 version drift", f"every file stamped {expected}")
+        res.ok("A5 version drift", f"every block written by {expected}")
+
+
+# ---------------------------------------------------------------- A9
+def check_prompt_lint(res, config):
+    """A9 (WARN): the methodology prompt's structure (scans/lint_prompt.py).
+
+    WARN, not FAIL: a drifted prompt does not make this cycle's findings wrong,
+    and blocking publication over it would hide real findings. It is here so the
+    lint runs every cycle instead of only when someone remembers it.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import lint_prompt
+        root = Path(config["promptsRoot"]) if config.get("promptsRoot") else WATCHTOWER_ROOT / "prompts"
+        problems = lint_prompt.lint(root)
+    except (ImportError, OSError) as e:
+        res.warn("A9 prompt lint", f"could not run: {e}")
+        return
+    if problems:
+        res.warn("A9 prompt lint", f"{len(problems)} problem(s): " + "; ".join(problems[:3]))
+    else:
+        res.ok("A9 prompt lint", "prompt structure clean")
+
+
+# ---------------------------------------------------------------- A8
+def check_block_freshness(res, active, scan_date):
+    """A8: every active project's block was written THIS cycle.
+
+    write_scan_jsons.py writes a JSON for every active project, dated with the cycle,
+    whether or not its agent ran. A project whose agent failed silently keeps last
+    cycle's block and would publish as freshly scanned ("0d" on Scan Status). The
+    block's own START marker date is the only evidence the agent wrote it. A block
+    dated before the cycle, or with no date, fails. A date after the cycle is
+    allowed: a long run crosses midnight.
+    """
+    stale, undated = [], []
+    for proj in active:
+        path = SCANS_DIR / f"{proj['slug']}-{scan_date}.json"
+        if not path.exists():
+            continue
+        got = json.loads(path.read_text(encoding="utf-8")).get("blockDate")
+        if not got:
+            undated.append(proj["slug"])
+        elif got < scan_date:
+            stale.append(f"{proj['slug']}={got}")
+    problems = ([f"stale: {stale[:6]}" + (f" (+{len(stale)-6} more)" if len(stale) > 6 else "")] if stale else []) \
+        + ([f"no date in START marker: {undated[:6]}"] if undated else [])
+    if problems:
+        res.fail("A8 block freshness",
+                 f"block not written this cycle ({scan_date}) -- "
+                 + "; ".join(problems)
+                 + ". Its agent did not finish; re-run it or leave the project out of this cycle.")
+    else:
+        res.ok("A8 block freshness", f"every block dated {scan_date} or later")
 
 
 # ---------------------------------------------------------------- A6
@@ -470,7 +539,7 @@ def main():
               and (portfolio_root / p["folder"]).is_dir()]
 
     todays = [f for f in SCANS_DIR.glob(f"*-{scan_date}.json")
-              if not f.name.startswith("integrity-failure-")]
+              if not f.name.startswith("integrity-")]
     if not todays:
         print(f"ERROR: no scans/*-{scan_date}.json found. Run write_scan_jsons.py first.")
         return 2
@@ -485,6 +554,8 @@ def main():
     check_flag_table_present(res, portfolio_root, active, scan_date)
     check_metric_drift(res, active, scan_date)
     check_scan_version(res, active, scan_date, detect_prompt_version(config))
+    check_block_freshness(res, active, scan_date)
+    check_prompt_lint(res, config)
     if args.skip_network:
         res.warn("A6 CVE canary", "skipped by --skip-network; CVE data this cycle is unverified")
     else:
@@ -499,9 +570,11 @@ def main():
 
     print(f"\n{len(res.passes)} passed, {len(res.warnings)} warning(s), {len(res.failures)} failure(s)")
 
+    passed_stamp = SCANS_DIR / f"integrity-pass-{scan_date}.stamp"
     if res.failures:
         # An unattended run that stops silently is just a different silent failure.
         # Leave evidence on disk so the next person finds a reason, not an absence.
+        passed_stamp.unlink(missing_ok=True)
         out = SCANS_DIR / f"integrity-failure-{scan_date}.json"
         out.write_text(json.dumps({
             "scanDate": scan_date,
@@ -516,6 +589,17 @@ def main():
     stale = SCANS_DIR / f"integrity-failure-{scan_date}.json"
     if stale.exists():
         stale.unlink()
+    # phase_c_update.py refuses a full merge without this stamp, or when any scan JSON
+    # for the date is newer than it. "STOP on exit 1" used to be a sentence in the
+    # skill; now the merge enforces it. .stamp, not .json: the stats scripts glob
+    # *-<date>.json and would count it as a project.
+    passed_stamp.write_text(json.dumps({
+        "scanDate": scan_date,
+        "passedAt": datetime.now(timezone.utc).isoformat(),
+        "files": sorted(f.name for f in todays),
+        "warnings": res.warnings,
+    }, indent=2), encoding="utf-8")
+    print(f"Wrote {passed_stamp.name}.")
     return 0
 
 

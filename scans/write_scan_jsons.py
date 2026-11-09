@@ -122,6 +122,48 @@ def _read_block(path):
     return m.group(1)
 
 
+MARKER_RE = re.compile(r'<!--\s*SCAN:AUTO:START\b([^>]*)-->')
+
+
+def _version_key(v):
+    return tuple(int(x) for x in v.lstrip("v").split("."))
+
+
+def block_stamps(claude_md_path):
+    """The version and date each SCAN:AUTO block says it was written with.
+
+    The cycle date and the prompt header describe what the ORCHESTRATOR intended.
+    Only the block's own START marker says what the scan agent actually wrote. A
+    project whose agent silently failed keeps last cycle's block; without this, it
+    was published with today's date and the current version (A5 compared the prompt
+    header with itself and could not fail).
+
+    Accepts every marker form in the portfolio: "v7.8 on 2026-11-07",
+    "v7.8 (scan 2026-11-07)", "v7.8 (scan date 2026-11-07)", bare "v7.8".
+    Returns (version, date): the OLDEST across CLAUDE.md and docs/security-scan.md,
+    and None for either when any present block lacks it, so a missing stamp can
+    never read as fresh.
+    """
+    claude_md_path = Path(claude_md_path)
+    versions, dates, blocks = [], [], 0
+    for path in (claude_md_path, claude_md_path.parent / "docs" / "security-scan.md"):
+        if not path.exists():
+            continue
+        m = MARKER_RE.search(path.read_text(encoding="utf-8", errors="replace"))
+        if not m:
+            continue
+        blocks += 1
+        v = re.search(r'\bv(\d+\.\d+)\b', m.group(1))
+        d = re.search(r'\b(\d{4}-\d{2}-\d{2})\b', m.group(1))
+        if v:
+            versions.append("v" + v.group(1))
+        if d:
+            dates.append(d.group(1))
+    version = min(versions, key=_version_key) if blocks and len(versions) == blocks else None
+    when = min(dates) if blocks and len(dates) == blocks else None
+    return version, when
+
+
 def read_scan_section(claude_md_path):
     """Return the project's scan output: CLAUDE.md's SCAN:AUTO block plus, from v7.8,
     the block in docs/security-scan.md (Security Notes, Deployed Surface, Strengths,
@@ -449,6 +491,7 @@ def main():
             continue
         scan_section = read_scan_section(claude_path)
         flags = parse_flags(scan_section)
+        block_version, block_date = block_stamps(claude_path)
         out = {
             "app": display_name,
             "slug": slug,
@@ -456,6 +499,10 @@ def main():
             "directory": folder,
             "scanDate": scan_date,
             "scanVersion": scan_version,
+            # What the block itself says (A5 and A8 read these, phase_c_update.py
+            # uses blockDate for lastScanned). scanVersion above is the cycle's prompt.
+            "blockVersion": block_version,
+            "blockDate": block_date,
             "flagCount": {"P1": 0, "P2": 0, "P3": 0, "P4": 0},
             "flags": flags,
         }
@@ -485,6 +532,9 @@ def main():
     if errors:
         for e in errors:
             print(f"ERROR: {e}", file=sys.stderr)
+        # A configured project with no CLAUDE.md is config drift or a moved folder.
+        # Exiting 0 let the run carry on with that project silently absent.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
