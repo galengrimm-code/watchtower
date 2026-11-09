@@ -102,7 +102,33 @@ def fmt_flag(flag):
         parts.append(f"exploit: {jstr(flag['exploit'])}")
     if flag.get("fix"):
         parts.append(f"fix: {jstr(flag['fix'])}")
+    # v7.9: verdict / blocker / refutation ride through to the dashboard. Dropping
+    # them here is how a contested flag would have rendered as uncontested.
+    if flag.get("verdict"):
+        parts.append(f"verdict: {jstr(flag['verdict'])}")
+    if flag.get("blocker"):
+        parts.append(f"blocker: {jstr(flag['blocker'])}")
+    if isinstance(flag.get("refutation"), dict):
+        parts.append(f"refutation: {js_obj_inline(flag['refutation'])}")
     return "      { " + ", ".join(parts) + " }"
+
+
+def fmt_watch_item(item):
+    """One Watch List entry (v7.9). Severity/category/confidence are optional:
+    legacy free-form bullets carry only what they stated."""
+    parts = [f"text: {jstr(item['text'])}"]
+    for key in ("severity", "category", "verdict", "blocker", "format"):
+        if item.get(key):
+            parts.append(f"{key}: {jstr(item[key])}")
+    if isinstance(item.get("confidence"), (int, float)):
+        parts.append(f"confidence: {item['confidence']:.2f}")
+    return "      { " + ", ".join(parts) + " }"
+
+
+def js_watch_list(items):
+    if not items:
+        return "[]"
+    return "[\n" + ",\n".join(fmt_watch_item(i) for i in items) + ",\n    ]"
 
 
 # -- Parser for the JS APPS array (object-aware string literal handling) --
@@ -572,6 +598,8 @@ def js_metrics(scan_metrics):
         v = scan_metrics["filesOver500"]
         if v is not None:
             lines.append(f"      filesOver500: {v},")
+    if scan_metrics.get("coverage"):
+        lines.append(f"      coverage: {jstr(scan_metrics['coverage'])},")
     lines.append("    }")
     return "\n".join(lines)
 
@@ -651,6 +679,11 @@ def update_app(obj_text, scan, app_name, prior_scanned=None):
     # 1) Merge flags (preserves accepted/resolved)
     flags = scan.get("flags", [])
     obj_text = merge_flags(obj_text, flags)
+
+    # 1b) Watch List (v7.9) -- its own lane, replaced wholesale each scan. A scan
+    #     JSON written by a pre-v7.9 parser has no key; leave the field untouched.
+    if "watchList" in scan:
+        obj_text = replace_top_level_field(obj_text, "watchList", js_watch_list(scan["watchList"]))
 
     # 2) lastUpdated
     obj_text = replace_top_level_field(obj_text, "lastUpdated", jstr(SCAN_DATE))
@@ -780,6 +813,8 @@ def make_new_app_entry(scan, app_name, category, description, completion=None, n
         lines.append("    ],")
     else:
         lines.append("    flags: [],")
+    if "watchList" in scan:
+        lines.append(f"    watchList: {js_watch_list(scan['watchList'])},")
     if scan.get("metrics"):
         lines.append(f"    metrics: {js_metrics(scan['metrics'])},")
     if scan.get("strengths"):

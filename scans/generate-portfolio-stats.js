@@ -52,7 +52,7 @@ function computeBurndown() {
     }
   }
   const dates = Object.keys(byDate).sort();
-  return {
+  const out = {
     dates,
     series: {
       P1: dates.map(d => byDate[d].P1),
@@ -61,7 +61,61 @@ function computeBurndown() {
       P4: dates.map(d => byDate[d].P4),
     },
     projectCounts: dates.map(d => byDate[d].projects),
+    // Every historical point comes from a scan artifact. The appended CURRENT point
+    // (below) does not — it is labelled so nothing mistakes it for a scan.
+    sources: dates.map(() => 'scan'),
   };
+
+  // CURRENT point, from data/apps.js dispositions.
+  //
+  // The series above answers "what did the scan FIND on date X". It cannot answer
+  // "where is the portfolio NOW", because remediation recorded after a scan lives in
+  // apps.js as accepted/resolved statuses that no scan artifact knows about. Without
+  // this the chart showed P1=16 on 2026-08-01 while the portfolio was actually at
+  // P1=3, and would not have moved until the next scheduled scan two weeks later.
+  //
+  // `dismissed: true` flags are NOT counted as remediation — a false positive
+  // withdrawn is not a vulnerability fixed.
+  try {
+    const appsSrc = fs.readFileSync(path.join(__dirname, '..', 'data', 'apps.js'), 'utf8');
+    const sandbox = { window: {} };
+    new Function('window', appsSrc)(sandbox.window);
+    const apps = (sandbox.window.APPS || []).filter(
+      a => a.category !== 'Other' && a.category !== 'Archived'
+    );
+    if (apps.length) {
+      const cur = { P1: 0, P2: 0, P3: 0, P4: 0 };
+      for (const a of apps) {
+        for (const f of a.flags || []) {
+          if (f.status === 'accepted' || f.status === 'resolved') continue;
+          if (cur[f.severity] !== undefined) cur[f.severity]++;
+        }
+      }
+      const latestScan = dates.length ? dates[dates.length - 1] : null;
+      const sameAsLatest =
+        latestScan &&
+        byDate[latestScan] &&
+        ['P1', 'P2', 'P3', 'P4'].every(k => byDate[latestScan][k] === cur[k]);
+      // Only append when the current state actually differs from the last scan —
+      // otherwise the chart grows a duplicate point every regeneration.
+      if (!sameAsLatest) {
+        const today = new Date().toISOString().slice(0, 10);
+        out.dates.push(today);
+        out.series.P1.push(cur.P1);
+        out.series.P2.push(cur.P2);
+        out.series.P3.push(cur.P3);
+        out.series.P4.push(cur.P4);
+        out.projectCounts.push(apps.length);
+        out.sources.push('dispositions');
+      }
+    }
+  } catch (e) {
+    // Never fail the whole stats run over the optional current point, but do not
+    // swallow it either — a silent skip here reads as "no remediation happened".
+    console.warn('[portfolio-stats] could not append current-state point: ' + e.message);
+  }
+
+  return out;
 }
 
 for (const p of PROJECTS) {

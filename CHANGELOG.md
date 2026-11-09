@@ -7,6 +7,41 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-11-09 — v7.9 (business logic, session boundaries, and a second dashboard lane)
+
+v7.8 covered injection, XSS, SSRF, CORS, OAuth, RLS, webhooks, secrets, supply chain and CI. A
+class-by-class comparison with Cloudflare's open-source `security-audit` skill (MIT,
+github.com/cloudflare/security-audit-skill) found it never looked at business logic (races,
+amounts, export scope) or at data leaking across a session boundary (service-worker caches,
+CDN-cached private responses, authorization that outlives revocation).
+
+- **Fifteen new checks.** Four grep-led checks with structural guards can emit Active Flags:
+  `weak-token-randomness`, `postmessage-origin-unchecked`, `postgrest-filter-injection`,
+  `unsafe-url-scheme`. Eleven judgment-heavy checks are PROVISIONAL (Watch List only) until a
+  cycle calibrates them.
+- **Integrity rules I19–I21.** I19 gives every candidate a verdict (CONFIRMED / UNRESOLVED /
+  REJECTED) and adds an orchestrator refutation pass that annotates disputes and never applies
+  them. I20 sets severity from the impact the evidence establishes. I21 requires an inventory of
+  entry points and a `Coverage:` metrics line, so "untraced" is visible instead of reading as clean.
+- **Upstream pin.** The prompt header pins the Cloudflare skill's commit; the scheduled run reports
+  drift against its `main` in the debrief. Adopting an upstream change is a new prompt version.
+- **The Watch List reaches the dashboard.** The report's Watch List is now a table
+  (`Severity | Category | Confidence | Verdict | Description`, with `Blocker:` for UNRESOLVED
+  rows). `write_scan_jsons.py` parses it into a `watchList` array (pre-v7.9 bullet lists parse as
+  `format: "legacy"`), `phase_c_update.py` merges it, and each card shows it in its own section,
+  not counted in grades or flag totals.
+- **Disputes are structured.** A `DISPUTED: <VERDICT>[ <tier>]; owner review pending. ` prefix on an
+  Active Flag is stripped from the text and stored as `refutation: {verdict, tier}`; the card shows
+  a "disputed" badge and the modal says the scanner's severity stands until the owner reviews it.
+- **Dashboard.** Explanations for all fifteen new categories; a review panel in the flag modal
+  (Watch List status, verdict, blocker, dispute); the `Coverage:` line under each card's metrics.
+- **New gate A3w** in `scans/verify_scan_integrity.py`: Watch List rows must equal the parsed
+  `watchList` length. `verify_scan_integrity.py` now ships in this repo; it was runtime-only.
+- **Mirror catch-up.** `write_scan_jsons.py` (whole flag text up to 1000 chars, the Active Flags
+  parse fix), `generate-portfolio-stats.js` (current-state point from recorded dispositions),
+  `check_docs_freshness.py` (extension allowlist for path tokens) and `index.html` (cards clamp,
+  the modal and PDF show the whole text) had drifted from the runtime copies and are re-synced.
+
 ## 2026-09-28 — v7.8 (the audit record leaves the auto-loaded CLAUDE.md)
 
 CLAUDE.md is read into context at the start of every session. The SCAN:AUTO block ran 100–154

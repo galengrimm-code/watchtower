@@ -56,6 +56,19 @@ RUN_CMD = re.compile(r"`(?:npm run|pnpm(?: run)?|yarn(?: run)?)\s+([\w:-]+)`")
 # Backticked repo-relative path: must contain a slash and end in a short
 # extension. Excludes URLs, absolute/home/drive paths, globs, node_modules.
 REL_PATH = re.compile(r"`([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.[A-Za-z]{1,5})`")
+# A backticked `a/b.ext` token only means a FILE if .ext is an extension we ship.
+# Flour & Froth reported a false positive on `notifySettings/main.smsTo` -- a
+# Firestore path composed at runtime from COLLECTION + DOC_ID + field, where
+# "smsTo" merely looks like a 5-letter extension. That literal never exists on
+# disk and never will, so "no longer exists" was wrong in a way no edit could fix.
+SOURCE_EXTS = {
+    "js", "jsx", "ts", "tsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "swift",
+    "sql", "css", "scss", "less", "html", "htm", "vue", "svelte", "astro",
+    "json", "jsonc", "yml", "yaml", "toml", "ini", "env", "lock", "md", "mdx", "txt",
+    "sh", "bash", "ps1", "bat", "cmd", "png", "jpg", "jpeg", "gif", "svg", "webp",
+    "ico", "avif", "woff", "woff2", "ttf", "pdf", "csv", "xlsx", "webmanifest", "map",
+}
+
 LAST_REVIEWED = re.compile(r"Last reviewed:\s*(\d{4}-\d{2}-\d{2})", re.I)
 SCAN_AUTO_BLOCK = re.compile(r"<!-- SCAN:AUTO:START.*?SCAN:AUTO:END[^>]*-->", re.S)
 
@@ -297,30 +310,45 @@ def check_project(root, today, extra_roots):
             pass
 
     # 2) Backticked repo-relative paths exist on disk.
-    #    Skipped: lines that intentionally reference nonexistent files
-    #    ("create X", "X is missing", "X was removed"), compound adjectives
-    #    (`pages/index.jsx`-style), and machine-local gitignored dirs.
+    #    Skipped: entries that intentionally reference a nonexistent file, tokens
+    #    whose extension is not one we ship, compound adjectives (`pages/index.jsx`-style),
+    #    and machine-local gitignored dirs.
     INTENTIONAL = re.compile(
-        r"\b(create|missing|deleted|removed|renamed|future|formerly|no longer|to be|will live)\b", re.I
+        r"\b(create|missing|deleted|removed|renamed|future|formerly|no longer|to be|will live"
+        # Self-correcting prose: an entry that names a path and then says that path
+        # was WRONG. Flour & Froth had a TECH-DEBT entry doing exactly this -- it
+        # cited `public/firebase-messaging-sw.js`, then stated the real file is
+        # public/sw.js. Line-scoped matching missed it because the correction sat on
+        # a different line, so this "found" a dead path the entry had already fixed.
+        r"|actually|in fact|correction|corrected|was wrong|is wrong|incorrect"
+        r"|should be|the correct|originally|superseded|stale reference)\b", re.I
     )
     file_index = None
     seen = set()
     for source_name, text in (("CLAUDE.md", claude_hand), ("TECH-DEBT.md", tech_debt)):
-        for line in text.splitlines():
-            if INTENTIONAL.search(line):
+        # Scope the skip to the ENTRY, not the line. Blank-line-separated blocks
+        # approximate a bullet or paragraph, and a correction anywhere in the block
+        # disqualifies every path reference inside it.
+        for block in re.split(r"\n\s*\n", text):
+            if INTENTIONAL.search(block):
                 continue
-            for m in REL_PATH.finditer(line):
-                rel = m.group(1)
-                after = line[m.end():m.end() + 1]
-                if after == "-":  # `path.tsx`-style adjective, not a reference
+            for line in block.splitlines():
+                if INTENTIONAL.search(line):
                     continue
-                if rel in seen or rel.startswith(("http", "node_modules", ".vercel/", ".next/")) or "*" in rel:
-                    continue
-                seen.add(rel)
-                if file_index is None:
-                    file_index = build_file_index(root)
-                if not path_resolves(rel, root, file_index, extra_roots):
-                    findings.append(f"{source_name} references `{rel}` which no longer exists")
+                for m in REL_PATH.finditer(line):
+                    rel = m.group(1)
+                    after = line[m.end():m.end() + 1]
+                    if after == "-":  # `path.tsx`-style adjective, not a reference
+                        continue
+                    if rel in seen or rel.startswith(("http", "node_modules", ".vercel/", ".next/")) or "*" in rel:
+                        continue
+                    if rel.rsplit(".", 1)[-1].lower() not in SOURCE_EXTS:
+                        continue  # composed/logical path, not a file we ship
+                    seen.add(rel)
+                    if file_index is None:
+                        file_index = build_file_index(root)
+                    if not path_resolves(rel, root, file_index, extra_roots):
+                        findings.append(f"{source_name} references `{rel}` which no longer exists")
 
     # 3) SESSION-HANDOFF freshness vs commits. Deterministic across clones:
     #    use the file's last-COMMIT time, not filesystem mtime (a fresh clone

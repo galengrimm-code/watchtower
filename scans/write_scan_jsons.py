@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Extract active flags from each project's CLAUDE.md and write scans/SLUG-DATE.json.
+"""Extract Active Flags and the Watch List from each project's scan blocks and write
+scans/SLUG-DATE.json.
 
 Reads watchtower.config.json for portfolioRoot + projects list. Scan date defaults
 to today (UTC) unless overridden by --date YYYY-MM-DD.
@@ -20,6 +21,12 @@ TABLE_ROW = re.compile(
     r'\|\s*(P[1-4])\s*\|\s*([\w-]+)\s*\|\s*([\d.]+%?)\s*\|\s*(.+?)\s*\|'
 )
 
+# v7.9 refutation marker written by the orchestrator's Phase B.65 at the start of a
+# disputed Active Flags description: "DISPUTED: DOWNGRADE P3; owner review pending. ..."
+DISPUTED_RE = re.compile(
+    r'^DISPUTED:\s*(STANDS|DOWNGRADE|UNRESOLVED|REJECT)(?:\s+(P[1-4]))?\s*;\s*owner review pending\.?\s*'
+)
+
 # CLAUDE.md "## Tech Stack" table Layer labels -> apps.js tech object keys
 # (the keys phase_c_update.py's js_tech() consumes).
 TECH_LAYER_MAP = {
@@ -32,6 +39,58 @@ TECH_LAYER_MAP = {
     "testing": "testing",
     "hosting": "hosting",
 }
+
+
+def detect_scan_version():
+    """First vN.N in the methodology prompt header, or None.
+
+    Stamped into every result JSON so the artifact says which prompt produced it.
+    Without it an integrity check cannot tell a current file from a stale one.
+    """
+    cfg = load_config()
+    roots = []
+    if cfg.get("promptsRoot"):
+        roots.append(Path(cfg["promptsRoot"]) / "security-scan-prompt.md")
+    roots.append(WATCHTOWER_ROOT / "prompts" / "security-scan-prompt.md")
+    for path in roots:
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        m = re.search(r"v\d+\.\d+", head)
+        if m:
+            return m.group(0)
+    return None
+
+
+_TAXONOMY = None
+
+
+def taxonomy_keys():
+    """Category keys from the prompt's CATEGORY TAXONOMY table (the single source of
+    truth). Empty set if the prompt cannot be read -- legacy Watch List items then
+    carry no category rather than a guessed one."""
+    global _TAXONOMY
+    if _TAXONOMY is None:
+        _TAXONOMY = set()
+        cfg = load_config()
+        roots = []
+        if cfg.get("promptsRoot"):
+            roots.append(Path(cfg["promptsRoot"]) / "security-scan-prompt.md")
+        roots.append(WATCHTOWER_ROOT / "prompts" / "security-scan-prompt.md")
+        for path in roots:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            m = re.search(r'## CATEGORY TAXONOMY(.*?)(?=\n## )', text, re.DOTALL)
+            if m:
+                _TAXONOMY = set(re.findall(r'^\|\s*`?([a-z0-9]+(?:-[a-z0-9]+)+)`?\s*\|', m.group(1), re.MULTILINE))
+                break
+        if not _TAXONOMY:
+            print("WARN: could not read the CATEGORY TAXONOMY from the scan prompt; "
+                  "legacy Watch List items will carry no category.", file=sys.stderr)
+    return _TAXONOMY
 
 
 def load_config():
@@ -50,6 +109,7 @@ def parse_confidence(raw):
 
 def _read_block(path):
     """Return one file's SCAN:AUTO block inner text, or "" if the file or markers are absent."""
+    path = Path(path)
     if not path.exists():
         return ""
     with open(path, 'r', encoding='utf-8') as f:
@@ -153,6 +213,13 @@ def parse_metrics(scan_section):
             # 500-threshold counts that can't be converted without per-file line
             # counts — omit so phase_c_update preserves the existing value until
             # the block regenerates in the current format on its next scan.
+    # v7.9 I21: "Coverage: methods 31/33 · server actions 4/4 · ..." -- kept as the
+    # agent wrote it; the dashboard shows it verbatim next to the flag counts.
+    cov = re.search(r'\*\*Coverage:\*\*\s*(.+)', section)
+    if cov:
+        val = cov.group(1).strip()
+        if val and not val.startswith('{'):
+            metrics["coverage"] = val[:600]
     return metrics
 
 
@@ -171,7 +238,13 @@ def parse_strengths(scan_section):
 
 
 def parse_flags(scan_section):
-    af_m = re.search(r'### Active Flags\s*\|[^\n]+\n\|[-| ]+\n((?:\|.*\n)*)', scan_section)
+    # Isolate the Active Flags section first, then find the table inside it. An agent may
+    # legitimately place a provenance note between the heading and the table; requiring the
+    # table to follow the heading immediately silently drops every flag in that project.
+    sect_m = re.search(r'### Active Flags\b(.*?)(?=\n### |\n## |\Z)', scan_section, re.DOTALL)
+    if not sect_m:
+        return []
+    af_m = re.search(r'\|[^\n]+\n\|[-| ]+\n((?:\|.*\n)*)', sect_m.group(1))
     if not af_m:
         return []
     flags = []
@@ -182,15 +255,111 @@ def parse_flags(scan_section):
             text = re.sub(r'\*\*([^*]+)\*\*', r'\1', description).strip()
             text = re.split(r'\s+—\s+(?:Fix|Run|Replace|Add|Change|Rotate|Do NOT)', text)[0]
             text = re.split(r'\.\s+Fix:', text)[0]
-            if len(text) > 150:
-                text = text[:147] + "..."
-            flags.append({
+            # Store the description WHOLE. A 150-char cap silently truncated half
+            # of every cycle's flags (median description is 151 chars) and cut them
+            # exactly where the evidence lives -- one P2 read "proven live ..." with
+            # the proof gone. The dashboard clamps for display; the data must not.
+            # The 1000 is a runaway guard, not a display budget.
+            if len(text) > 1000:
+                text = text[:997] + "..."
+            flag = {
                 "text": text,
                 "severity": severity,
                 "category": category,
                 "confidence": parse_confidence(confidence_raw),
-            })
+            }
+            # v7.9 Phase B.65: the orchestrator annotates a disputed row by prefixing
+            # its description. The markdown stays the single source of truth; the
+            # marker is lifted into a structured field so the dashboard can badge it.
+            dm = DISPUTED_RE.match(text)
+            if dm:
+                flag["text"] = text[dm.end():].strip() or text
+                flag["refutation"] = {"verdict": dm.group(1)}
+                if dm.group(2):
+                    flag["refutation"]["tier"] = dm.group(2)
+            flags.append(flag)
     return flags
+
+
+def _cell_text(cell):
+    return re.sub(r'\*\*([^*]+)\*\*', r'\1', cell).replace('\\|', '|').strip()
+
+
+def parse_watch_list(scan_section):
+    """Parse '### Watch List' into a list of dicts (v7.9).
+
+    Two formats. The v7.9 template is a table with a header row
+    (Severity | Category | Confidence | Verdict | Description); columns are matched
+    by header name, so order changes do not shift fields. Earlier scans wrote free-
+    form bullets; each top-level bullet becomes one item marked format "legacy",
+    with severity / category / confidence lifted only when the bullet states them.
+    Nothing is dropped: an item the parser cannot structure still keeps its text.
+    """
+    sect_m = re.search(r'### Watch List[^\n]*\n(.*?)(?=\n### |\n## |\Z)', scan_section, re.DOTALL)
+    if not sect_m:
+        return []
+    body = sect_m.group(1)
+    items = []
+    tm = re.search(r'^(\|[^\n]+)\n\|[-| :]+\n((?:\|.*\n?)*)', body, re.MULTILINE)
+    if tm:
+        header = [h.strip().lower() for h in re.split(r'(?<!\\)\|', tm.group(1).strip().strip('|'))]
+        for row in tm.group(2).splitlines():
+            cells = [c.strip() for c in re.split(r'(?<!\\)\|', row.strip().strip('|'))]
+            if len(cells) < len(header):
+                continue
+            rec = dict(zip(header, cells))
+            sev = rec.get("severity", "").strip()
+            if not re.fullmatch(r'P[1-4]', sev):
+                continue
+            text = _cell_text(rec.get("description", ""))
+            if len(text) > 1000:
+                text = text[:997] + "..."
+            item = {"text": text, "severity": sev,
+                    "category": rec.get("category", "").strip('` ')}
+            try:
+                item["confidence"] = parse_confidence(rec.get("confidence", ""))
+            except ValueError:
+                pass
+            verdict = rec.get("verdict", "").strip().upper()
+            if verdict in ("CONFIRMED", "UNRESOLVED"):
+                item["verdict"] = verdict
+            bm = re.search(r'\bBlocker:\s*(.+)$', text)
+            if bm:
+                item["blocker"] = bm.group(1).strip()
+            items.append(item)
+        return items
+    # Legacy bullets: one item per top-level bullet, continuation lines folded in.
+    current = None
+    for line in body.splitlines():
+        if re.match(r'^[-*]\s+', line):
+            if current is not None:
+                items.append(current)
+            current = line
+        elif current is not None and line.strip() and not line.startswith('#'):
+            current += " " + line.strip()
+    if current is not None:
+        items.append(current)
+    out = []
+    for raw in items:
+        text = _cell_text(re.sub(r'^[-*]\s+', '', raw))
+        if len(text) > 1000:
+            text = text[:997] + "..."
+        head = text[:160]
+        item = {"text": text, "format": "legacy"}
+        sm = re.search(r'\bP([1-4])\b', head)
+        if sm:
+            item["severity"] = "P" + sm.group(1)
+        # Only a real taxonomy key counts. Prose is full of hyphenated words
+        # ("re-verified", "owner-only", dates) that are not categories.
+        for tok in re.findall(r'\b([a-z0-9]+(?:-[a-z0-9]+)+)\b', head):
+            if tok in taxonomy_keys():
+                item["category"] = tok
+                break
+        fm = re.search(r'\b(0\.\d+|1\.0)\b', head)
+        if fm:
+            item["confidence"] = float(fm.group(1))
+        out.append(item)
+    return out
 
 
 def main():
@@ -202,6 +371,13 @@ def main():
                              "on-demand single-project rescans so you don't restamp every other "
                              "project's JSON with today's date from possibly-stale CLAUDE.md blocks. "
                              "Requires an explicit --date (see below).")
+    parser.add_argument("--include-archived", action="store_true",
+                        help="Also write JSONs for projects whose category is 'Archived'. OFF by "
+                             "default: Phase B does not re-scan Archived projects, so their "
+                             "CLAUDE.md blocks are from a PRIOR cycle. Writing them stamps stale "
+                             "findings with today's date and the dashboard then presents last "
+                             "cycle's posture as current — a silent false-freshness bug that a "
+                             "2026-08-29 run had to clean up by hand.")
     args = parser.parse_args()
 
     # A single-slug rescan must land inside an EXISTING scan cycle, not mint a new
@@ -242,6 +418,24 @@ def main():
         if not projects:
             sys.exit(f"ERROR: --slug '{args.slug}' matched no project in watchtower.config.json")
 
+    if not args.include_archived:
+        archived = [p for p in projects if p.get("category") == "Archived"]
+        if args.slug and archived:
+            sys.exit(
+                f"ERROR: --slug '{args.slug}' is an Archived project. Archived projects are not "
+                f"re-scanned, so its CLAUDE.md block is from a prior cycle and writing it would "
+                f"stamp stale findings with {scan_date}. Pass --include-archived if that is "
+                f"genuinely what you want."
+            )
+        if archived:
+            print(f"SKIP {len(archived)} Archived project(s): "
+                  f"{', '.join(p['slug'] for p in archived)}")
+        projects = [p for p in projects if p.get("category") != "Archived"]
+
+    scan_version = detect_scan_version()
+    if scan_version is None:
+        print("WARN: could not read a version from the scan prompt; scanVersion will be null.")
+
     written = []
     errors = []
 
@@ -257,8 +451,11 @@ def main():
         flags = parse_flags(scan_section)
         out = {
             "app": display_name,
+            "slug": slug,
+            "category": proj.get("category"),
             "directory": folder,
             "scanDate": scan_date,
+            "scanVersion": scan_version,
             "flagCount": {"P1": 0, "P2": 0, "P3": 0, "P4": 0},
             "flags": flags,
         }
@@ -274,12 +471,15 @@ def main():
             out["strengths"] = strengths
         for f in flags:
             out["flagCount"][f["severity"]] += 1
+        # v7.9: the Watch List is its own lane. It never feeds flagCount, grades or
+        # stats -- those describe confirmed, Active findings only.
+        out["watchList"] = parse_watch_list(scan_section)
         filename = f"{slug}-{scan_date}.json"
         filepath = SCANS_DIR / filename
         with open(filepath, "w", encoding="utf-8") as fp:
             json.dump(out, fp, indent=2)
         written.append(filename)
-        print(f"  {filename}  ({len(flags)} flags: P1={out['flagCount']['P1']} P2={out['flagCount']['P2']} P3={out['flagCount']['P3']} P4={out['flagCount']['P4']})")
+        print(f"  {filename}  ({len(flags)} flags: P1={out['flagCount']['P1']} P2={out['flagCount']['P2']} P3={out['flagCount']['P3']} P4={out['flagCount']['P4']}; watch list {len(out['watchList'])})")
 
     print(f"\nWrote {len(written)} scan files.")
     if errors:
