@@ -5,9 +5,16 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.8
+# Security Scan Prompt v7.9
 
 Scan this project and give me a full security audit and code analysis.
+
+**v7.9 (2026-11-09) — business-logic and session-boundary classes, and three validation rules, adapted from Cloudflare's open-source `security-audit` skill (MIT, github.com/cloudflare/security-audit-skill):**
+- **Why.** v7.8 covers injection, XSS, SSRF, CORS, OAuth, RLS/tenant scoping, webhooks, secrets, supply chain and CI well. A class-by-class comparison against Cloudflare's hunting references found it does not look at *business logic* (races, amounts, export scope) or at data leaking *across a session boundary* (service-worker caches, CDN-cached private responses, stale authorization). The v7.8 prompt contains zero occurrences of `Math.random`, `postMessage`, `x-forwarded-host`, `caches.put` or PostgREST `.or(` — each a known way into this stack.
+- **STEP 1: fifteen new checks** in a new "v7.9 additions" block. Four grep-led checks with structural guards emit Active Flags: `weak-token-randomness`, `postmessage-origin-unchecked`, `postgrest-filter-injection`, `unsafe-url-scheme`. Eleven judgment-heavy, version-dependent or platform-dependent checks are **PROVISIONAL (Watch List only)** until a cycle calibrates them, same lane as the v7.1 provisionals: `private-response-cached`, `sw-cache-identity-leak`, `race-check-then-act`, `amount-tampering`, `export-scope-overreach`, `signed-url-overreach`, `stale-authz-after-revocation`, `llm-indirect-injection`, `auth-recovery-flow-gap`, `host-header-link-poisoning`, `user-regex-redos`.
+- **Integrity rules I19–I21.** I19 sets precedence: the v7.1 decision policy makes *candidates*; I19 gives each a status (CONFIRMED / UNRESOLVED / REJECTED). It separates "does it exist" from "how bad is it," leaves the dependency-CVE tier table in charge of CVE flags, defines which live reads may settle a blocker, and adds an orchestrator refutation pass that never auto-applies. I20: impact is what the evidence shows — no crash-to-outage, no same-user-to-escalation, no isolation inferred from "serverless" — and hardening with no affected principal is P4 at most. I21: one operation inventory per project, compare every path to the same effect, and a session check authenticates but does not authorize.
+- **Calibration run (receiptstack, 2026-11-09).** Cloudflare's method was run on receiptstack, read-only: one hunter pass and a critic pass, then three fresh verifiers, with live blockers settled by read-only catalog queries. 8 candidates → **3 confirmed, 5 rejected**. All 3 confirmed were absent from the 2026-11-07 Watchtower scan: a service-role `DELETE /api/match` gated only on a session (medium; I21 worked example), an OCR spend cap counting a client-writable proxy, carried as Resolved since April (low; LLM section), and a caller-keyed rate-limit RPC with no bound on key cardinality or timestamp reach (low; unbounded-growth). Four rejections needed a second org to exist. Migration `20261007130039` and an index definition pointed at the controls; the rejections rest on the live catalog, re-read on 2026-11-09: RLS on for `organizations` and `organization_users`, SELECT-only policies on both, the unique index `organization_users_one_org_per_user` present, no public function that inserts into either table, and `/api/team` as the only membership write path, which refuses a user already on another team. A migration names a control to verify; it does not prove the control is deployed (I1). The fifth rejection rested on the live `users` SELECT policy. Population counts played no part: they describe today, not what can be reached. **Draft review:** a Codex adversarial pass on the first draft found 24 problems — wrong PostgREST and ReDoS guards, a cache check that conflated three cache layers, an unsafe revocation guard, and precedence conflicts with the v7.1 decision policy and the CVE tiers. A second Codex pass found 17 of them only partly fixed and 17 new problems, among them a Find command Bash could not parse and guards that let one control clear an unrelated failure. This text is the third draft.
+- **Not adopted:** Cloudflare's sandboxed execution of target code (Watchtower never runs target code), its multi-wave hunter/critic loop (cost), and the binary, desktop/mobile IPC, RPC/broker, container and release-signing classes (not this stack). Deferred to a later version: decompression bombs, detached upstream work after client cancel, soft-delete bypass, CI `permissions:` scope.
 
 **v7.8 (2026-09-28) — the scan's audit record moves out of the auto-loaded CLAUDE.md:**
 - **CLAUDE.md is read into context at the start of every session**, security-related or not. The SCAN:AUTO block ran 100–154 lines per project; in one app it was 36 KB of a 49 KB CLAUDE.md. Most of it is audit record a coding session rarely needs — flag tables, dispositions, deployed-surface probes, metrics — re-paid every session in every scanned project.
@@ -303,6 +310,7 @@ Run these commands and include the results:
   - For each hit, check whether it's WRITTEN to from a request/event handler (`.set(`, `.add(`, `.push(`, `[key] =`) and whether ANY eviction path exists: `.delete(`, `.clear(`, `.shift(`/`.splice(`, a TTL/expiry check, an LRU lib, or a max-size guard.
   - Writes with no eviction → flag `unbounded-growth`. This is distinct from `serverless-memory-state` (state loss on cold start): on serverless, an unbounded collection still OOMs a warm instance under sustained traffic; on a long-running server (VPS, PM2, Railway) it's a slow memory leak that dies at 3am.
   - Severity moderate; **P2 when the collection is keyed by unbounded user input (per-IP, per-session, per-request-ID) on a long-running server** — an attacker can grow it deliberately.
+  - **Database form (v7.9):** a function the caller can actually reach, that inserts rows keyed by caller-chosen arguments, where the only cleanup deletes rows older than some window. Establish reachability first: a schema PostgREST exposes, USAGE on that schema, and EXECUTE for `authenticated` or `anon` (then it is callable at `/rest/v1/rpc/<name>`), or a callable wrapper that reaches it. Then trace the key, the timestamp validation, uniqueness, any per-caller quota, and the cleanup predicate. FLAG accumulation the caller controls beyond an effective bound, and say whether cleanup is merely deferred (a timestamp a year out is swept in a year) or unbounded (arbitrary keys with no quota, timestamps far enough out to outlive the table). Seen in receiptstack's `increment_rate_limit(p_route, p_window_start)`: callers choose both arguments, nothing caps `p_route`'s cardinality or how far `p_window_start` reaches, and the sweep deletes only rows older than an hour. Earlier scans had listed it only as an intended SECURITY DEFINER grant. Fix: derive the window and key on the server inside the function, or revoke EXECUTE and call it only from server code.
   - Fix: bound it — `lru-cache` with `max`, a TTL sweep (`setInterval` purge), or move the state to Redis/Upstash/DB where it belongs.
   - Do NOT flag: collections populated once at module load from static data, build-time-only scripts, test files.
 
@@ -320,6 +328,8 @@ Run these commands and include the results:
 > - **WATCH-LIST (confidence < 0.8):** the structural shape is present but you could not fully trace the dataflow across files. "I couldn't prove the exploit," "I'm not sure," and "couldn't find the whole chain" all map HERE — never to silence.
 >
 > Two hard rules inside that policy: (a) **Absence of a guard is not presence of a guard.** If you cannot find the session-binding comparison, the host allowlist, or the neutralization in the code you read, it is NOT there — do not assume it exists elsewhere; fire or watch-list. (b) **A guard only counts if it is the LISTED exemption for that specific check.** A real-looking control that is not on the check's exemption list (a CSRF cookie for `unsigned-tenant-binding`, "first-party domain" for `external-redirect`, a role gate for `token-in-logs`) does NOT clear the finding, no matter how reassuring it looks.
+>
+> **v7.9 amendment: I19 decides the verdict.** The policy above still governs the *candidate*: the FLAG condition makes one, absence of a guard is still not presence, and a trap still names an inference you may not make. At the verdict stage, I19 applies. Cite the control, show it applies on the traced path, and show it defeats the specific alleged failure. A listed guard clears only the failure it addresses. An equivalent control may clear with the same proof. A trap forbids the unsupported inference it states, not every use of the API it names. CONFIRM, CLEAR and WATCH-LIST above correspond to I19's CONFIRMED, REJECTED and UNRESOLVED.
 
 - **Unsigned tenant binding** (`unsigned-tenant-binding`, critical, A01):
   - The sink that matters: a tenant/org/owner/role identifier that decides WHO a privileged or cross-tenant write applies to, sourced from client-controllable data that is NOT cryptographically bound to the authenticated session.
@@ -457,6 +467,174 @@ Run these commands and include the results:
   - Candidate signal: a dependency name within edit-distance 1–2 of a high-popularity package (`expresss`→`express`, `crossenv`→`cross-env`, `lodahs`→`lodash`, `momnet`→`moment`), or separator/scope manipulation of one (`react-dom-router`, `@types-node`).
   - Guard (do NOT watch-list): exact matches to real packages; well-known packages whose names merely resemble each other (`react` vs `preact`); first-party/internal names that are intentional.
   - Text (Watch List): "`{package}` is within edit-distance {n} of popular package `{target}` — possible typosquat. Verify it's the intended package (check author, age, download count) before trusting it."
+
+**v7.9 additions — business logic and session-boundary checks (adapted from Cloudflare's `security-audit` hunting references):**
+
+> Same contract as the v7.1 block above, with I19's two stages. The grep only *finds candidates*; a verdict needs the code read and a `{file:line}`. The FLAG condition makes a candidate; I19 decides CONFIRMED / UNRESOLVED / REJECTED; I20 sets severity; I21 says to compare every path to the same effect. The first four checks are Active. The other eleven are **PROVISIONAL (Watch List only)** until a full cycle calibrates them.
+>
+> **Running the Find commands.** They are written for Bash (Git Bash on Windows), not PowerShell. Every pattern is in single quotes, so Bash expands nothing inside it; a quote character inside a pattern is written `\x27` (single), `"` (double) or `\x60` (backtick). Search the repository root (`.`), never a fixed list of directories that may not exist. `rg` exits 0 on matches, 1 on none and 2 on an error. Never suppress errors: exit 2 is a skipped check (I8), and exit 1 means no textual match, not a completed semantic check. If a command is a pipeline, check every stage (`${PIPESTATUS[@]}`). The searches are deliberately broad inventories: read each hit and classify the receiver and the operation. Multiline mode does not repair a pattern that omits legal whitespace or alternate syntax, so inspect aliases, computed calls and multiline forms separately. Older checks in this file that pass fixed directory lists with `2>/dev/null` fall under the same rule: if a listed directory is missing, rerun on `.`. Record every unsearched or errored surface under I8.
+
+- **Weak or short security tokens** (`weak-token-randomness`, P2, A02):
+  - Find generators: `rg -n 'Math\.random\(|Date\.now\(\)\.toString|nanoid/non-secure|customAlphabet\(|from [\x27"]nanoid[\x27"]|randomUUID\(\)\.(slice|substring|substr)|randomBytes\(\s*[0-9]+\s*\)|toString\(36\)' -g '*.{js,jsx,ts,tsx,mjs,cjs}' -g '!**/node_modules/**' -g '!**/*.test.*' -g '!**/tests/**' .`
+  - Then find access-granting values: invite codes, share links and public slugs for private data, password-reset and magic-link tokens, pay-link tokens, API keys, session, CSRF and step-up tokens, unsubscribe and one-click approval tokens. Trace each to the code that generates it.
+  - Judge the **final** token, not the generator's name. Check the randomness source, the import (`nanoid/non-secure` is not cryptographic; plain `nanoid` is), the alphabet and length *after* any slicing or truncation, the token's lifetime, how many are live, and whether the server enforces an attempt limit. Two failures are distinct, so name which one: **predictable** (`Math.random`, `Date.now`, a counter) and **too small** (a crypto-random but short value: `randomUUID().slice(0, 6)`, `randomBytes(2)`, a 6-digit code).
+  - FLAG when guessing or predicting the value grants a capability the guesser does not already have, and the token's size together with server-side attempt limits does not make guessing infeasible. Six digits or fewer is the point where you must find the attempt limit; it is not a line above which a code is safe.
+  - Severity: **P1** when the token alone authenticates or authorizes, with no session needed (reset link, magic link, API key, a pay link that exposes account data or moves money); **P2** otherwise.
+  - Guard (do NOT flag): guessing it gains nothing; or the final token carries at least 122 bits from a CSPRNG (`crypto.randomUUID()` untruncated, 16+ bytes from `getRandomValues` / `randomBytes`, secure `nanoid()` at 21 characters).
+  - ⚠ RATIONALIZATION TRAPS: "the token is looked up in the database" proves it exists, not that it can't be guessed. "A session is also required" does not clear a CSRF, recovery or step-up token. Those tokens exist precisely because the session alone is not enough.
+  - Text: "{file:line} mints {what the token grants} as {source, final length/alphabet}: {predictable | ~N bits with {no | M-attempt} limit}. An attacker who {predicts | enumerates} it gains {capability}."
+  - Fix: `crypto.randomUUID()` (untruncated) or 32 bytes from `crypto.getRandomValues`; put a server-side attempt limit on every short code.
+
+- **postMessage trust** (`postmessage-origin-unchecked`, P2, A01):
+  - Find: `rg -n 'addEventListener\(\s*[\x27"]message[\x27"]|onmessage\s*=|\.postMessage\(' -g '*.{js,jsx,ts,tsx,mjs,html}' -g '!**/node_modules/**' -g '!**/.next/**' -g '!**/dist/**' .`
+  - First classify the receiver and establish who can reach each endpoint. **Window** listeners receive from any page that can open or frame this one; that is the boundary this check's origin rules are about. Worker and port channels do not use Window-origin checks, but they are not automatically trusted: a service worker receives messages from every client of its scope, and a `MessagePort` can be transferred. Trace transferred ports, service-worker clients and message relays across user or session boundaries, and judge what they accept under the applicable check.
+  - FLAG a Window `message` listener that takes a security-relevant action on `event.data` — stores a token or code, sets auth state, navigates, calls an authenticated API, writes HTML — without first checking `event.origin` against a **trusted** expected origin. Also FLAG `postMessage(payload, '*')` when the payload carries a token, code, session, PII or private record.
+  - Severity: **P1** when the listener accepts a token, OAuth code or session (popup login; the John Deere or Plaid connect flows); P2 otherwise.
+  - Guard (do NOT flag): exact equality against a constant; exact membership in a constant list (`Set.has`, or `includes` / `indexOf` called on a constant **array**); or an anchored, fully escaped regex over a finite list of origins, before any use of `event.data`; the listener's only effect is harmless (UI resize, analytics ping). For library-owned listeners (Plaid Link, Stripe.js), confirm the app does not add its own handler that trusts the same messages. Don't exempt the library by name.
+  - ⚠ RATIONALIZATION TRAPS: substring tests on the origin **string** (`event.origin.includes(...)`, `event.origin.indexOf(...) !== -1`), `endsWith('.vercel.app')`, an unanchored regex and checking `event.source` are not origin checks. `https://example.com.attacker.net` passes `includes`, and every Vercel customer owns a `.vercel.app` subdomain. An exact match against an origin the attacker supplies (taken from the URL or from the message itself) is no check at all.
+  - Text: "Window message listener at {file:line} {effect} from `event.data` with {no origin check | `{check}`, which {why it fails}}. Any page that can open or frame this one can {consequence}."
+  - Fix: compare `event.origin` against a constant allowlist before reading `event.data`; send with an explicit target origin, never `'*'`.
+
+- **PostgREST filter-expression injection** (`postgrest-filter-injection`, P2, A03):
+  - Find, in two inventories. Raw-grammar methods: `rg -n '\.\s*(or|not|filter|in|order|containedBy|overlaps|textSearch)\s*\(' -g '*.{js,jsx,ts,tsx,mjs,cjs}' -g '!**/node_modules/**' -g '!**/.next/**' -g '!**/dist/**' -g '!**/build/**' .` Caller-chosen columns, where the first argument is not a string literal: `rg -n '\.\s*(eq|neq|gt|gte|lt|lte|like|ilike|is|contains|match|order)\s*\(\s*[^\x27"\x60\s)]' -g '*.{js,jsx,ts,tsx,mjs,cjs}' -g '!**/node_modules/**' -g '!**/.next/**' -g '!**/dist/**' -g '!**/build/**' .` Array methods (`list.filter(x => …)`, `ids.order`) are noise; read each call and keep those on a Supabase query builder. These methods have different grammars, so classify the value grammar by the actual operator and method:
+    - **`.or(expr)` / `.not(col, 'in', list)` / a raw list string**: the input lands inside a *logical expression or list*. Commas and parentheses there are structure. `` .or(`name.eq.${q}`) `` with `q = 'x,user_id.not.is.null'` adds a branch.
+    - **`.eq(col, value)` / `.ilike(col, value)`** with a fixed column: the input is a single *scalar value*. A comma cannot add a branch. `.ilike` still treats `%` and `_` as wildcards, which is a matching concern, not injection. **`.filter(col, op, value)` and `.not(col, op, value)` are raw escape hatches**: the client appends the operator and value as written, so `.filter('id', 'in', raw)` takes list grammar. A fixed column and operator do not make a value scalar; validate or serialize it for that operator's grammar.
+    - **A caller-chosen column or operator** (`.filter(req.col, req.op, v)`, `.eq(req.col, v)`, `.order(req.sort)`): the input controls an *identifier*. That makes a candidate, not a finding. It is a finding when the chosen identifier discloses, modifies or deletes rows, or triggers an action, that the caller is not entitled to; sorting an authorized result by any column usually is not.
+    - **`.in(col, array)`**: supabase-js quotes elements containing commas or parentheses. Check the installed version before trusting it with embedded `"` or `\`; some versions do not escape them, so `['a","b']` becomes two values.
+  - FLAG when caller input changes the query's **structure** (adds a branch, list element, column or operator) and so reads, modifies or deletes rows, or causes a downstream action, outside what the caller is authorized to do. Show a payload that is syntactically valid for the real operator and column type; `user_id.neq.0` fails on a UUID column.
+  - Severity: **P1** when the query runs on a service-role client and the injected structure crosses the tenant or user boundary; **P2** when it bypasses an application-level restriction within the RLS client. Judge the effective RLS for the **operation actually performed** (SELECT, UPDATE or DELETE) together with any application-level restriction. Read entitlement does not establish update or delete entitlement, or permission for a privileged downstream action. Widening an ordinary search within rows the caller may read is not a finding (I20).
+  - Guard (do NOT flag): the input is validated to a strict shape first (UUID, integer, enum); or each value in a raw expression is serialized for PostgREST — backslashes and double quotes escaped, then the value wrapped in double quotes; or the input stays in a scalar position of a fixed-column, fixed-operator method. A separately enforced `.eq('tenant_id', sessionTenant)` still constrains an injected `.or()`, so count it in the impact.
+  - Text: "{file:line} interpolates `{input}` into a {logical expression | list | identifier} for `.{method}()`. Payload `{payload}` {adds what}, {exposing | modifying | deleting | causing an unauthorized action on} {rows} on the {service-role | RLS} client."
+  - Fix: keep caller input in scalar positions (`.eq`, `.ilike`); validate or serialize it for the exact grammar before building any `.or()`, `.filter()` or `.not()` value; allowlist any caller-chosen column.
+
+- **Dangerous URL schemes from stored values** (`unsafe-url-scheme`, P3, A03):
+  - Find sinks: `rg -n 'href\s*=\s*\{|src\s*=\s*\{|window\.open\(|location(\.href)?\s*=|location\.(assign|replace)\(|router\.(push|replace)\(|setAttribute\(\s*[\x27"](href|src)|redirect\(' -g '*.{jsx,tsx,js,ts}' -g '!**/node_modules/**' -g '!**/.next/**' .` Keep the ones whose URL comes from stored user data or a third party: a vendor website field, a link on a record, a URL pulled out by OCR, an API response.
+  - Record the sink, the renderer and version (resolved `react-dom` from the lockfile, not the `package.json` range), and what the browser actually does with each scheme at that sink:
+    - **React-rendered `href`/`src` props, React 19+**: React replaces `javascript:` with a throwing stub (`react-dom` `sanitizeURL`). That covers only props React renders. It does not cover `setAttribute`, `innerHTML`, `window.open`, `location` assignment, or React 18 and earlier.
+    - **`javascript:` reaching `location`, `window.open`, `setAttribute('href')`, or a React ≤18 `href`**: the case that matters. Assigning `location` runs it immediately. An `href` runs it only when someone activates the link. State the exact element or API, the interaction it needs, the browsing context it runs in, any CSP or sandbox that applies, and the resulting harm. Reaching an attribute is not execution.
+    - **`data:`**: modern browsers block top-level navigation to it, and a `data:` document gets an opaque origin. Treat it as a phishing or rendering concern, not as script in your origin.
+    - **`src` on `<img>`**: no navigation, no script.
+  - FLAG when a scheme that actually does harm at that sink reaches it with no neutralization.
+  - Severity: P3. **P2** when one user's stored value runs in another user's session (a shared record, an admin viewing customer data).
+  - Guard (do NOT flag): `new URL(value)` with a protocol allowlist chosen for that sink (`https:` and `http:` for links, adding `mailto:` only where a mail link makes sense); the complete construction proves attacker input cannot influence the scheme or a dangerous destination (an app-built URL that concatenates user input is not app-generated); or the exact sink neutralizes the scheme. React 19's DOM-prop sanitization clears the `javascript:` path it covers, nothing more.
+  - Text: "{file:line} passes stored `{field}` to {sink} ({renderer/version}) with no scheme check. {the demonstrated harm: e.g. "A `javascript:` value runs in the viewer's session when they click the link"}."
+  - Fix: parse with `new URL()` and allow only the schemes that sink needs.
+
+- **Private response reused by a cache** (`private-response-cached`, P1, A01) — **PROVISIONAL (Watch List only)**:
+  - Why provisional: caching in Next.js depends on the version and configuration, and a structural match produces false P1s. Calibrate for a cycle first.
+  - Find: `rg -n "s-maxage|stale-while-revalidate|Cache-Control|CDN-Cache-Control|Vercel-CDN-Cache-Control|revalidate|force-static|force-cache|fetchCache|unstable_cache\(|['\"]use cache['\"]|cacheLife\(|cacheTag\(|cacheComponents|dynamicIO" -g '*.{js,jsx,ts,tsx,mjs,json}' -g '!node_modules/**' -g '!.next/**' .`, plus `headers` in `vercel.json` and `next.config.*`.
+  - First record the installed `next` version and whether Cache Components (`cacheComponents` / `dynamicIO`) is on. Then judge **each cache layer on its own**. A guard clears only the layer it controls:
+    - **CDN (Vercel edge).** Effective headers win in this order: `Vercel-CDN-Cache-Control`, then `CDN-Cache-Control`, then `Cache-Control`. A browser-facing `private` does not stop a targeted CDN header from caching the response. Per Vercel's documentation, the CDN does not cache a response that sets a cookie (`Set-Cookie` on the **response**) or carries `Vary: Cookie`, nor one to a **request** that carries an `Authorization` header. Cite the current docs rather than assuming either way.
+    - **Full Route Cache.** Without Cache Components, calling `cookies()`, `headers()` or `searchParams` makes a route render dynamically. Then `export const revalidate = 60` does **not** put personalized HTML in a shared cache. `force-static` makes those APIs return empty values; it does not cache the first caller's cookies. With Cache Components, trace which subtree is cached and which reads the request.
+    - **Data cache (`unstable_cache`, `'use cache'`, `fetch` with `force-cache`).** The cache key is the function's arguments plus `keyParts` for `unstable_cache`. For `'use cache'`, it is the arguments plus captured serializable closure values. FLAG when per-user or per-role data is cached under a key that omits whatever decides access. A tenant id is not enough when users inside a tenant see different rows.
+  - Authorization placement matters. An auth check **outside** a data cache runs on every request, cache hit included. An auth check **inside** the cached body runs only on a miss.
+  - FLAG when private output can be served, from any layer, to a caller who is not authorized to receive it.
+  - Guard (do NOT flag): for each layer that could hold the data, a cited reason it cannot reach an unauthorized caller: effective headers exclude it from the CDN, the route renders dynamically, or every caller who could receive it is authorized to. A key that includes the user or tenant id clears **cross-identity** mixing only. It does not cover the same user after their access changes, when authorization runs only on a miss. For that, show that every hit is authorized under the current policy, or that authorization changes invalidate or version the entries within the app's stated revocation tolerance.
+  - Text (Watch List): "{layer} at {file:line} can return {private data} cached under {key/headers} to {who}. Next {version}, Cache Components {on/off}."
+  - Fix: key data caches by every input that decides access; set `private, no-store` and remove targeted CDN cache headers on responses that read the session.
+
+- **Service-worker cache serving data across an authorization change** (`sw-cache-identity-leak`, P2, A01) — **PROVISIONAL (Watch List only)**:
+  - Find the service worker first: `rg -l 'self\.addEventListener|serviceWorker\.register|next-pwa|@serwist|workbox|runtimeCaching' -g '!**/node_modules/**' -g '!**/.next/**' .` Then, in the worker files and their imports only: `rg -n 'caches\.(open|match|keys|delete)|\.(put|add|addAll)\(|registerRoute|StaleWhileRevalidate|NetworkFirst|CacheFirst|ignoreSearch|ignoreVary' <files>`. Trace `Cache` objects held in variables; `.put` on an alias counts.
+  - FLAG when **private** content (a response that depends on who is asking) can be selected from the cache and served after sign-out, an account switch or a role change, or to a different account on the same device. Trace what is written, the effective cache key (whether it matches by `Request` or by URL alone, and with `ignoreSearch` / `ignoreVary`), fallback matching (offline pages), and what happens on sign-out, session expiry and account switch.
+  - A public `/api/catalog` response is not private. HTTP `no-store` does not stop a service worker from calling `cache.put` explicitly.
+  - Guard (do NOT flag): the service worker caches no private responses; or every path that changes authorization deletes the private caches, **and** no in-flight fetch can write them back afterward (deletion races with a fetch that is still pending).
+  - Text (Watch List): "Service worker at {file:line} caches {private responses} under {key}. After {transition}, {who} can be served them."
+  - Fix: exclude authenticated responses from runtime caching, or partition caches by user and delete them on every authorization change, after pending fetches settle.
+
+- **Race on check-then-act** (`race-check-then-act`, P2, A04) — **PROVISIONAL (Watch List only)**:
+  - Where it bites: balances and credits, inventory, one-time redemptions, approval and payment status transitions (`pending` → `approved` / `paid`), usage counters that gate spend.
+  - Find: in route handlers, server actions, RPCs and Cloud Functions, look for a read (`.select(`, `.single()`, `getDoc(`, `.get()`) whose value decides a later write or external effect (`.update(`, `.insert(`, `setDoc(`, a Stripe or Plaid call, sending email or SMS).
+  - FLAG when concurrent execution or a retry can duplicate any security-relevant effect, exceed a protected bound, or violate a state invariant, even if one request later fails or rolls back. Two charges with one recorded order is a finding.
+  - A guard counts only if it serializes or deduplicates every effect it protects. Database transactions protect database effects; external effects need their own deduplication or recovery. Trace commit failure, retry and redelivery paths:
+    - A conditional `update … where status = 'pending'` with the row count checked, **before** any external call.
+    - A row lock (`SELECT … FOR UPDATE`) or a serializable transaction, for the database effects inside it.
+    - Provider idempotency keys for external calls (a Stripe `Idempotency-Key`), stable for the same logical operation and not replaceable by a caller-supplied key.
+    - An outbox, when its consumer is idempotent or deduplicates the effect.
+  - ⚠ RATIONALIZATION TRAPS: a unique constraint hit **after** two charges have gone out does not undo them. A Firestore `runTransaction` callback can be retried, so a non-idempotent effect inside it can run twice. A disabled button or a client-side debounce is not a guard; the attacker uses `curl`.
+  - Text (Watch List): "{file:line} reads `{field}` then {writes / calls} in a separate step. Two concurrent requests can both {consequence}."
+  - Fix: claim the row with a conditional update before the effect; use provider idempotency keys; keep non-idempotent effects out of retried transaction callbacks.
+
+- **Price, amount and entitlement tampering** (`amount-tampering`, P1, A04) — **PROVISIONAL (Watch List only)**:
+  - Find: `rg -n 'unit_amount|price_data|line_items|priceId|price_id|coupon|discount|credits|(body|formData|input|args|params|data)\.(amount|price|quantity|total)|get\([\x27"](amount|price|quantity|total)' -g '*.{js,jsx,ts,tsx}' -g '!**/node_modules/**' .` Keep the sites where the value comes from the request body, form data or a server-action argument.
+  - FLAG when the caller controls a price, discount, credit or entitlement without the server establishing that the value is **authoritative** and that the caller is **eligible** for it. Examples: a caller-supplied amount reaches a charge; a caller-selected Stripe Price or product belongs to a cheaper or unavailable offer; a coupon is applied without an eligibility check.
+  - Numeric bounds alone do not clear it. A $100 item charged at a caller-supplied 1 cent passes `.int().positive().max()`.
+  - For values the caller legitimately chooses (quantity, a tip, a donation), check the domain's allowed range and any inventory or balance limit. Zero-price flows and negative adjustments can be intentional; don't flag on sign alone.
+  - Guard (do NOT flag): the server derives the amount from its own records for an offer the caller is entitled to; caller-chosen quantities are bounded by the domain and the inventory.
+  - Text (Watch List): "{file:line} takes `{field}` from the request and {charges / credits / grants} it without {deriving it | checking eligibility}. A caller can {consequence}."
+  - Fix: look prices up on the server by an id the caller is entitled to; check coupon and offer eligibility server-side.
+
+- **Export and report scope** (`export-scope-overreach`, P1, A01) — **PROVISIONAL (Watch List only)**:
+  - Find the files without a pipe: `rg --files --iglob '*{export,report,pdf,csv,xlsx,download,backup}*' --iglob '**/*{export,report,pdf,csv,xlsx,download,backup}*/**' -g '!**/node_modules/**' -g '!**/.next/**' .`, then the code that builds them: `rg -n 'text/csv|application/pdf|spreadsheetml|Content-Disposition|attachments\s*:' -g '*.{js,jsx,ts,tsx}' -g '!**/node_modules/**' .`
+  - FLAG when an export, report or scheduled mailer uses a requested scope (tenant, landlord, customer) **without checking that the caller has authority over that scope**, or sends to a recipient **without checking that the recipient is entitled to the rows**. Request-supplied date ranges and search filters are normal once the scope is authorized.
+  - Distinct from `csv-formula-injection`, which judges cell content. This check asks who may receive which rows.
+  - Guard (do NOT flag): two separate questions, each needing its own proof. **Rows:** cite the effective policy or server authorization that restricts the exact exported rows; "it runs on the RLS client" counts only after you have read the policy it relies on. **Recipient:** verify the recipient's authority over those rows, or an explicit, user-authorized share where the app supports one. A caller-scoped query does not authorize every destination.
+  - Text (Watch List): "{file:line} exports {data} for scope `{source}` on {client} without {authorizing the scope | checking the recipient}. {who} can receive {other parties' rows}."
+  - Fix: authorize the requested scope against the session before querying; bind each recipient to the rows they are allowed to see.
+
+- **Signed URL and bucket authorization** (`signed-url-overreach`, P2, A01) — **PROVISIONAL (Watch List only)**:
+  - Find: `rg -n "createSignedUrls?\(|createSignedUploadUrl|getPublicUrl\(|storage\.from\(|\.list\(|expiresIn" -g '*.{js,jsx,ts,tsx}' -g '!node_modules/**' .` Also read the effective storage policies: live `pg_policies` on `storage.objects` (I1, I19 rule 5), not just the migrations.
+  - Evaluate four things separately: **who signs** (a user client is bound by policy; a service-role client is not), **which object** (is the path authorized for this caller?), **who receives the URL**, and **how long it lasts against when access should end**.
+  - FLAG when: a service-role client signs a path the caller influences without an ownership check; a storage policy is keyed only on `bucket_id`, which also governs `list()` (I16); a public bucket holds private documents; or a long-lived or persisted URL (a DB column, an email, a push payload) gives access to someone who should no longer have it.
+  - A short expiry never clears an unauthorized object. A 30-second URL for another tenant's document is still a leak.
+  - Expiry over an hour, or persisting the URL, means asking who holds it and for how long. It is not a finding by itself; an intentionally emailed download link can be fine.
+  - Guard (do NOT flag): only when every failing dimension above is disproved. Object selection: the path is built from the session's identity and the effective policy checks the owner folder (`(storage.foldername(name))[1] = auth.uid()::text`) or the caller's org, or service-role signing happens only after an ownership check. That clears **object selection only**. Recipient, bucket exposure and lifetime each need their own answer.
+  - Text (Watch List): "{file:line} {signs `{path}` with {client} | relies on policy `{policy}`}. {who} can read {what} beyond their own objects{, for {duration} after access ends}."
+  - Fix: scope policies to the owner or org folder; check ownership before any service-role signing; keep URL lifetimes no longer than the access they represent.
+
+- **Authorization that outlives revocation** (`stale-authz-after-revocation`, P2, A01) — **PROVISIONAL (Watch List only)**:
+  - FLAG when the **server or data path** keeps accepting a credential after the user's access is revoked, for longer than the app can tolerate. Revocation here means a member removed, a role downgraded, an account disabled.
+  - Examples: RLS or a route reads role or membership from JWT claims (`app_metadata`, custom claims) instead of the membership table; a realtime channel authorized once at subscribe time keeps delivering after removal.
+  - State the window you found, for example "until the access token expires, default 1 hour," and compare it with what the app requires.
+  - Supabase `signOut` (any scope) revokes refresh tokens. It does **not** invalidate an access JWT that is already issued, which stays valid until it expires. So "removal also signs the user out" does not close the window for claims-based checks.
+  - Client UI state being stale is not server access. A client closing its own listener is not an authorization boundary.
+  - Guard (do NOT flag): the protected path re-reads membership on each request (an RLS policy that joins the membership table, or a server check per call); or the demonstrated window fits the app's stated tolerance. For Firestore listeners, cite how rules re-evaluate for that listener rather than assuming.
+  - Text (Watch List): "{path} at {file:line} authorizes from {claim / subscription}. After removal ({file:line}), access continues for {window}."
+  - Fix: authorize against the membership table, not token claims; shorten the JWT lifetime if claims must be used; re-authorize realtime channels when membership changes.
+
+- **Indirect prompt injection and confused-deputy tools** (`llm-indirect-injection`, P2, A03) — **PROVISIONAL (Watch List only)**:
+  - Distinct from `llm-prompt-injection`, which covers text the current user types. This check covers content whose author is **not authorized to direct the model's current capabilities**: OCR output, email bodies, uploaded documents, scraped pages, partner API fields, other tenants' records, and records written by a lower-privilege collaborator on the same account. Imported content stored under a user's identity is still the original author's content.
+  - FLAG when that content reaches a model prompt AND the model can do any of these:
+    - disclose protected data, whether through a read tool, its own output, or a fetch to a URL it chose;
+    - act (write, send, delete) beyond what the content's author could do themselves;
+    - spend money;
+    - decide an authorization or financial outcome.
+  - Also FLAG conversation history, embeddings or a context cache keyed without the tenant.
+  - Read-only tools are not exempt. A fetch tool can send private prompt content to an attacker's URL. A model that stays perfectly tenant-bound can still email every one of the tenant's invoices to an attacker's address.
+  - Severity when calibrated: **P1** when it crosses tenants, discloses secrets or moves money; P2 otherwise.
+  - Guard (do NOT flag): only after accounting for every egress: tool calls, model output, rendered links and fetches. Either the model's capabilities reach nothing beyond what the content's author could already reach, or a human approves the **exact** action, recipient and data before it runs. Tenant binding and destination allowlists narrow the scope; they do not by themselves authorize the action or the disclosure, because a malicious document can act inside the victim's own tenant and through an allowed destination.
+  - Text (Watch List): "{source} content reaches the prompt at {file:line}. The model can {disclose / act / spend} via `{tool}` as {authority}, unchecked for {what}."
+  - Fix: bind tool arguments to the session on the server; allowlist outbound destinations; require approval that shows the exact action; mark untrusted content as data in the prompt.
+
+- **Password reset, recovery and account linking** (`auth-recovery-flow-gap`, P2, A07) — **PROVISIONAL (Watch List only)**:
+  - Find: `rg -n "resetPasswordForEmail|redirectTo|emailRedirectTo|updateUser\(|linkIdentity|unlinkIdentity|reauthenticate|mfa\.(enroll|unenroll|challenge)|signOut\(" -g '*.{js,jsx,ts,tsx}' -g '!node_modules/**' .`
+  - FLAG when:
+    - a reset or magic-link `redirectTo` comes from request input **and** the provider's redirect allowlist would accept an attacker's origin;
+    - an email or password change runs with no fresh authentication;
+    - an identity is linked, or MFA is unenrolled, without fresh authentication or step-up;
+    - after a password reset, the app relies on old sessions ending when they don't, with the access-token window stated (see `stale-authz-after-revocation`).
+  - A valid recovery challenge (the emailed reset link itself) can count as fresh authentication for the reset step. Supabase checks redirect targets against the project's Redirect URLs list, so read that setting (I19 rule 5) before calling a request-built `redirectTo` an open redirect. Apply I15 before blaming one repo for a project-wide setting.
+  - Guard (do NOT flag): redirect targets come from a configured constant, or the provider allowlist is confirmed narrow; credential and identity changes require recent authentication.
+  - Text (Watch List): "{file:line} {flow} without {fresh auth | a constrained redirect}. {consequence}."
+  - Fix: build redirects from a configured site URL and keep the provider allowlist narrow; require re-authentication before credential, identity or MFA changes.
+
+- **Absolute links built from request headers** (`host-header-link-poisoning`, P2, A05) — **PROVISIONAL (Watch List only)**:
+  - Find: `rg -n "x-forwarded-host|x-forwarded-proto|['\"]host['\"]|['\"]origin['\"]|req\.headers\.(host|origin)|nextUrl\.origin|\.url\)\.origin" -g '*.{js,jsx,ts,tsx}' -g '!node_modules/**' .` Then trace each value, including `(await headers()).get(...)` and aliases.
+  - FLAG when a header-derived origin builds an absolute URL that leaves the request: an email or SMS link (reset, invite, magic link, receipt), a push payload, a `redirectTo`, an OAuth `redirect_uri`.
+  - Why provisional: whether a forged header reaches the function depends on the platform. Vercel routes by `Host`, so a forged `Host` usually lands on someone else's deployment. `x-forwarded-host` and `origin` are the realistic vectors. State which header the code reads and whether you could confirm the platform overwrites it; if you could not, mark it UNRESOLVED with that blocker.
+  - Guard (do NOT flag): the origin comes from a configured constant (`SITE_URL`, `NEXT_PUBLIC_SITE_URL`) or is checked against an allowlist.
+  - Text (Watch List): "{file:line} builds a {link type} from `{header}`. If that header is caller-controlled, the link points at an attacker's origin and carries {token}."
+  - Fix: build outbound links from a configured site URL.
+
+- **Regular-expression denial of service** (`user-regex-redos`, P3, A04) — **PROVISIONAL (Watch List only)**:
+  - Find patterns, not call sites. Injection: `rg -n '\bRegExp\s*\(' -g '*.{js,jsx,ts,tsx,mjs,cjs}' -g '!**/node_modules/**' -g '!**/*.test.*' .` Nested quantifiers: `rg -n '\([^()]*[+*][^()]*\)[+*{]' -g '*.{js,jsx,ts,tsx,mjs,cjs}' -g '!**/node_modules/**' -g '!**/*.test.*' .` (catches `(a+)+` and `(\w+\s?)*`). Overlapping alternation such as `(a|aa)+` has no reliable grep; read the regexes near each input-handling path. Then trace each pattern to every `.test`, `.exec`, `.match`, `.replace` or `.split` that applies it, through variables, and to the subject's source.
+  - Two separate failures:
+    - **Regex injection.** User input becomes the *pattern*. Escaping fixes it when the input is meant to be literal text.
+    - **Catastrophic matching.** A pattern with nested or overlapping quantifiers (`(a+)+$`, `(\w+\s?)*$`), static or not, runs against a long subject the attacker controls.
+  - Capping the pattern's length does not bound matching time; `(a+)+$` is seven characters.
+  - FLAG when an attacker controls either the pattern or a long subject for a vulnerable pattern, on a path that blocks shared work (I20 — Fluid Compute shares instances).
+  - Guard (do NOT flag): the pattern is literal-escaped and has no dangerous quantifier structure; the subject is length-bounded before matching, small enough that the worst case is cheap; or the engine is linear-time (RE2).
+  - Text (Watch List): "{file:line} runs {pattern} against {subject source}, {unbounded | N chars}. Crafted input causes catastrophic backtracking on a shared instance."
+  - Fix: escape literal input; bound the subject's length before matching; rewrite nested quantifiers or use RE2.
 
 Also extract the deployed URL:
 - Check vercel.json for "alias" or "domains" fields
@@ -1639,7 +1817,7 @@ Do not ask permission to run this protocol. Just run it.
 |----------|----------|------------|-------------|
 {rows from scan; if no flags, replace the table body with the literal text "_None_" on its own line.}
 
-### Watch List (confidence < 0.8)
+### Watch List
 {list, or "_None_"}
 
 ### Accepted Risks
@@ -1664,6 +1842,7 @@ Do not ask permission to run this protocol. Just run it.
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
 - **Scan prompt version:** {version from this prompt's title line}
+- **Coverage:** {entry points whose authorization you traced / found, by kind — e.g. "methods 31/33 · server actions 4/4 · RPCs 3/6 · edge functions 2/2 · buckets 2/2 (policies read)"; then the untraced ones and why (v7.9 I21)}
 
 <!-- SCAN:AUTO:END -->
 ```
@@ -1760,10 +1939,10 @@ The CLAUDE.md block must NOT contain `## Security Notes`, `## Deployed Surface`,
 
 **docs/security-scan.md block (v7.8 — four headings):**
 
-1. `## Security Notes` containing `### Active Flags`, `### Watch List (confidence < 0.8)`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
+1. `## Security Notes` containing `### Active Flags`, `### Watch List`, `### Accepted Risks`, `### Resolved` — all four subheadings present, use `_None_` where empty
 2. `## Deployed Surface` — heading present (use "_Not deployed_" if no URL)
 3. `## Strengths` — heading present with exactly one non-empty sentence (v7.0 addition)
-4. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version)
+4. `## Metrics` — bullet list with all 7 lines (Total lines, Components/Pages/API routes, Files over 500 lines, Repo, Production URL, Last commit scanned, Scan prompt version), plus the v7.9 Coverage line (not yet enforced by the validator)
 
 If ANY required heading is missing, ANY subheading is omitted, a moved section is still in CLAUDE.md, OR the Universal Guardrails list does not contain exactly 9 numbered items, re-emit the failing file's entire SCAN:AUTO block from scratch — do not patch. Do not output success until both blocks are structurally complete.
 
@@ -2134,15 +2313,19 @@ Every flag MUST be a structured object:
   "category": "category-key",
   "confidence": 0.95,
   "exploit": "Concrete attack scenario (required for P1/P2, omit for P3/P4)",
-  "fix": "Specific remediation step (required for P1/P2, optional for P3/P4)"
+  "fix": "Specific remediation step (required for P1/P2, optional for P3/P4)",
+  "verdict": "CONFIRMED|UNRESOLVED (v7.9 I19; REJECTED candidates are not emitted)",
+  "blocker": "Exact unresolved fact + the observation that would settle it (v7.9 I19 — include only when a deciding fact is not observable; omit otherwise)"
 }
 
+Until dashboard ingestion supports separate lanes, the dashboard shows Active Flags only: `scans/write_scan_jsons.py` reads only the Active Flags table and cuts each description to 150 characters. Keep Watch List findings, blockers and full disputes in the project report and the debrief, and say in the debrief that Watch List findings do not appear on the dashboard.
+
 - severity must be exactly one of: "P1", "P2", "P3", "P4"
-- confidence must be a number from 0.7 to 1.0 — omit flags below 0.7
+- confidence must be a number from 0.7 to 1.0 — omit flags below 0.7, EXCEPT an UNRESOLVED item that names its `blocker` (v7.9 I19 rule 4), which is recorded on the Watch List at the confidence the evidence supports
 - exploit is required for P1 and P2 flags, omit for P3/P4
 - fix is required for P1 and P2 flags, optional for P3/P4
 - category must be a key from the CATEGORY TAXONOMY section below
-- Deduplicate: if the same category would appear multiple times, merge into one flag with combined details in the text field
+- Deduplicate (v7.9): decide each instance's placement first (I19 rule 4). Group only findings with the same category, severity, verdict, disposition and output lane, and keep each instance's evidence, blocker and tripwire in the flag text (one line per instance). If one confidence score cannot honestly represent the grouped instances, emit separate flags. Dependency CVEs keep their own grouping and placement (one flag per tier).
 - Do NOT output plain string flags — always use the object format
 
 ---
@@ -2466,6 +2649,21 @@ These are the valid category keys for flags. Every flag must use one of these:
 | malicious-install-script | P1 | Dependency install script (pre/post/install) does a dangerous combination — remote fetch + execution, credential read + network exfil, or obfuscation + execution. Install-time RCE / supply-chain malware. The dangerous subset of supply-chain-install-scripts; emitted instead of it, never both. (v7.2) |
 | dependency-confusion | moderate | PROVISIONAL (Watch List only): scoped/internal dependency with no private-registry pin — possibly claimable on the public registry (Birsan). Needs a registry-ownership lookup the prompt can't do; pending candidate-generation script. (v7.2) |
 | typosquat-dependency | moderate | PROVISIONAL (Watch List only): dependency name within edit-distance 1–2 of a popular package — possible typosquat. Pending candidate-generation script. (v7.2) |
+| weak-token-randomness | P2/P1 | Access-granting token that is predictable (`Math.random`, `Date.now`, `nanoid/non-secure`) or too small for its attempt limits (truncated UUID, short code with no server-side limit). Judged on the final token. P1 when the token alone authenticates. (v7.9) |
+| postmessage-origin-unchecked | P2/P1 | Window `message` listener takes a security-relevant action on `event.data` without checking `event.origin` against a trusted allowlist, or `postMessage(sensitive, '*')`. Workers/ports excluded. P1 when it accepts a token, OAuth code or session. (v7.9) |
+| postgrest-filter-injection | P2/P1 | Caller input changes PostgREST query structure (a branch in `.or()`, a list element, a column or operator) to disclose, modify or delete rows, or cause a downstream action, outside the caller's authorization. P1 on a service-role query crossing the tenant/user boundary. Scalar positions of fixed-column methods are not injection. (v7.9) |
+| unsafe-url-scheme | P3/P2 | Stored or third-party URL reaches a sink where its scheme does harm (`javascript:` to `location`/`window.open`/`setAttribute`/React ≤18 `href`) with no per-sink allowlist. React's DOM-prop sanitization clears only the `javascript:` path it neutralizes; evaluate other schemes and sinks separately. P2 when one user's value runs in another's session. (v7.9) |
+| private-response-cached | P1 | PROVISIONAL (Watch List only): private output can be served to an unauthorized caller from a CDN, Full Route or data cache — judged per layer, per Next version and Cache Components setting. (v7.9) |
+| sw-cache-identity-leak | P2 | PROVISIONAL (Watch List only): service worker can serve private cached content after sign-out, account switch or role change, or to another account on the device. (v7.9) |
+| race-check-then-act | P2 | PROVISIONAL (Watch List only): concurrent execution or retry can duplicate a security-relevant effect, exceed a protected bound or violate a state invariant, even when one request later fails or rolls back. (v7.9) |
+| amount-tampering | P1 | PROVISIONAL (Watch List only): caller controls a price, discount, credit or entitlement without the server establishing it is authoritative and the caller is eligible. Numeric bounds alone do not clear. (v7.9) |
+| export-scope-overreach | P1 | PROVISIONAL (Watch List only): export, report or mailer uses a requested scope without authorizing it, or a recipient without checking entitlement to the rows. Who receives rows, not cell content (cf. `csv-formula-injection`). (v7.9) |
+| signed-url-overreach | P2 | PROVISIONAL (Watch List only): signing authority, object authorization, audience or lifetime lets someone read objects beyond their own, or after access ends. Short expiry never clears an unauthorized object. (v7.9) |
+| stale-authz-after-revocation | P2 | PROVISIONAL (Watch List only): server or data path keeps accepting a credential after revocation for longer than the app tolerates (JWT claims, subscribe-time realtime auth). Supabase signOut does not invalidate issued access tokens. (v7.9) |
+| llm-indirect-injection | P2/P1 | PROVISIONAL (Watch List only): content whose author is not authorized to direct the model's current capabilities (including lower-privilege collaborators on the same account) reaches a prompt whose model can disclose, act, spend or decide beyond what that content's author could. Read-only tools are not exempt. (v7.9) |
+| auth-recovery-flow-gap | P2 | PROVISIONAL (Watch List only): reset redirect the provider allowlist would accept for an attacker, credential/identity/MFA change without fresh auth, or reliance on sessions ending after a reset. (v7.9) |
+| host-header-link-poisoning | P2 | PROVISIONAL (Watch List only): outbound absolute link (email, SMS, push, `redirectTo`, OAuth `redirect_uri`) built from `X-Forwarded-Host` / `Origin` / `Host`. Platform-dependent. (v7.9) |
+| user-regex-redos | P3 | PROVISIONAL (Watch List only): attacker controls a regex pattern, or a long subject for a pattern with nested quantifiers, on a shared-instance path. Pattern length caps are not a guard. (v7.9) |
 
 ---
 
@@ -2590,6 +2788,21 @@ Reference: https://owasp.org/Top10/ (© OWASP Foundation, CC BY-SA 4.0)
 | rls-write-side-coverage | A01 |
 | mass-assignment | A01 |
 | trusted-client-header | A01 |
+| weak-token-randomness | A02 |
+| postmessage-origin-unchecked | A01 |
+| private-response-cached | A01 |
+| sw-cache-identity-leak | A01 |
+| postgrest-filter-injection | A03 |
+| unsafe-url-scheme | A03 |
+| race-check-then-act | A04 |
+| amount-tampering | A04 |
+| export-scope-overreach | A01 |
+| signed-url-overreach | A01 |
+| stale-authz-after-revocation | A01 |
+| llm-indirect-injection | A03 |
+| auth-recovery-flow-gap | A07 |
+| host-header-link-poisoning | A05 |
+| user-regex-redos | A04 |
 
 ### Notes on the mapping
 - **Dual mappings**: a few categories arguably touch two OWASP categories (e.g., `no-rate-limiting` is both A04 Insecure Design and an enabler of A07 auth attacks). The table picks the primary category; secondary mappings can be added in a future revision if users care.
@@ -2737,9 +2950,9 @@ Every flag MUST include a confidence score (0.0-1.0):
 - 0.9-1.0: Certain exploit path identified
 - 0.8-0.9: Clear vulnerability pattern with known exploitation methods
 - 0.7-0.8: Suspicious pattern requiring specific conditions to exploit
-- Below 0.7: Do NOT include the flag — too speculative
+- Below 0.7: Do NOT include the flag — too speculative. Exception (v7.9 I19 rule 4): an UNRESOLVED item that names the exact fact blocking it goes on the Watch List with its `blocker`
 
-Flags with confidence below 0.8 go to a "Watch List" subsection in docs/security-scan.md instead of Active Flags.
+Placement (v7.9 I19 rule 4): flags from PROVISIONAL checks, UNRESOLVED flags and flags below 0.8 confidence go to the "Watch List" subsection in docs/security-scan.md; other CONFIRMED flags go to Active Flags. Dependency CVEs follow I19 rule 2. Never change a confidence score to force a placement.
 
 ---
 
@@ -2784,6 +2997,16 @@ If the project uses AI/LLM APIs (check for imports of anthropic, openai, @anthro
 - eval() or exec() processing AI/LLM responses → category: llm-code-execution
 - AI API keys hardcoded in source (not env vars) → category: hardcoded-secrets
 - No cost/rate limiting on LLM API calls (unbounded user-triggered AI requests) → category: llm-unbounded-cost
+- **A cap that exists is not a cap that holds (v7.9).** Establish an authoritative bound on total
+  billable work: a server-written invocation log or credit reservation checked atomically, or a
+  provider-enforced budget. Concurrent reservations must not together exceed the remaining budget.
+  Account for billable retries and failures, either one by one or with a reservation that covers the
+  most work one admitted operation can do. A request-count cap bounds cost only if the cost per
+  request is bounded. receiptstack's "200 OCR runs/day" cap counted `receipts` rows by
+  `captured_by` + `created_at`, both client-writable, and re-POSTing a `failed` receipt re-ran OCR
+  (up to 3 model calls) without adding a row. It had been recorded Resolved since 2026-04-18. A
+  counter that callers can write, or that billable work can bypass, is a candidate; emit
+  `llm-unbounded-cost` only when the complete path lacks an effective independent bound, and name it.
 - Tool/function calling without validating what the LLM requested before executing → category: llm-tool-no-validation
 
 If no AI/LLM packages detected, skip this section.
@@ -3044,8 +3267,182 @@ privilege-granting are different questions.
    hardening on the helper is irrelevant if the data it reads is caller-writable.
 4. Verify by attempting the escalation inside a transaction that ends in `RAISE` (which
    rolls back the function's own writes), not by reading the policy text. The catalog says
-   what is allowed; only the attempt says what is reachable.
+   what is allowed; only the attempt says what is reachable. **v7.9: owner-attended sessions
+   only.** A rollback does not undo external effects, so an unattended scan does not run it. Record the
+   unrun attempt as a verification limitation in the flag text, and as a `blocker` only when that
+   observation decides whether the finding exists (I19 rule 5).
 
+
+### I19. Candidates, then verdicts: how a structural match becomes a finding (v7.9)
+
+The 2026-11-07 cycle produced seven P1s. Codex challenged three. One of the three came back "DOWNGRADE
+TO P2." The other four P1s and all sixty P2s were never challenged by anyone who had not written them.
+Cloudflare's audit method gives every candidate to a fresh verifier with instructions to refute it from
+source. On the 2026-11-09 calibration run that pass rejected 5 of 8 candidates. This rule adopts it, and
+fixes how it composes with the rules already in this file.
+
+**1. Precedence.** Two stages, in this order:
+- **Candidate stage — the v7.1 DECISION POLICY.** A structural match, the check's FLAG condition met
+  by code you read, makes a candidate. Neither an exemption nor a trap is a verdict by itself.
+- **Verdict stage — this rule and I20.** Every candidate ends in exactly one status:
+  - **CONFIRMED** → emitted, at the severity the established facts support; placed by rule 4.
+  - **UNRESOLVED** → emitted to the Watch List with a `blocker`. Only when the unresolved fact decides whether the
+    vulnerability *exists*.
+  - **REJECTED** → no flag. Only with a citation that disproves the trace: a `{file:line}`, or a live
+    catalog fact gathered under rule 5 below.
+- **Clearing.** Cite the control, show it applies on the traced path, and show it defeats the
+  specific alleged failure. A listed guard clears only the failure it addresses; a check with several
+  failure dimensions clears only when each is disproved. An equivalent control may clear with the same
+  proof. A rationalization trap forbids the unsupported inference it states, not every use of the API
+  it names. "Probably handled elsewhere" and "seems safe" never clear.
+- Where this rule and a check's text disagree, this rule wins for the *status*, and the check wins for
+  *which code to look at*.
+
+**2. Existence versus impact.** Keep the two kinds of uncertainty apart.
+- Unknown whether the vulnerability exists (an advisory precondition, a live policy, a platform
+  behavior that decides reachability) → UNRESOLVED, Watch List, `blocker`.
+- Vulnerability established, but its *ceiling* unknown (how many tenants, whether a second org can
+  appear) → stays **CONFIRMED** at the severity the established facts support. Its output lane comes
+  from rule 4 alone; confirmation does not override provisional status or confidence placement. Record
+  the escalation condition as a tripwire in the flag text.
+- **Which rule sets severity under uncertainty.** I1 governs uncertainty about *unverified live
+  database state*: never lower a severity by assuming a deployed control or restriction you have not
+  read. I20 governs every other claim of impact: never raise a severity on an exploit or consequence
+  you have not traced. When a live fact keeps a finding at the higher tier, name that fact.
+- **Dependency CVEs keep their own table.** For an advisory that applies to the installed version,
+  `npm-cve-critical` / `npm-cve-high` severity comes from the REACHABILITY TIERS, not from I20:
+  reachable production P1, disproved production reachability P2, demonstrated dev/build-only P3. An
+  inconclusive production trace takes the higher tier. Missing reachability evidence does not turn an
+  applicable advisory into an UNRESOLVED existence finding or move it out of Active Flags; record the
+  reachability question and its blocker in the flag text. No flag only when the advisory does not
+  apply to the installed version. I2 dispositions still apply. If your impact analysis disagrees with
+  the tier, say so in the flag text; do not override the table.
+
+**3. Trace before you write a P1 or P2.** State the lower-trust entry point, each hop with
+`{file:line}`, the sink or effect, and the **strongest control on the path** — the best argument
+against your own finding. Name the strongest applicable control, or write "none found on the traced
+  path" with the locations you inspected. An UNRESOLVED finding may carry an explicitly incomplete
+  trace; never invent a control or a confirmed exploit to complete one.
+
+**4. Confidence, status and deduplication.**
+- Three separate properties. `verdict` (CONFIRMED or UNRESOLVED) is about this finding. PROVISIONAL is
+  a property of the *check* that produced it. `confidence` measures evidence strength. Record each on
+  its own, and never adjust one to change another.
+- **Placement.** Except for dependency CVEs (rule 2), findings from PROVISIONAL checks, UNRESOLVED
+  findings and findings below 0.8 confidence go to the Watch List; every other CONFIRMED finding goes
+  to Active Flags.
+- An UNRESOLVED item **with a named blocker** is recorded even below 0.7. The 0.7 floor still drops
+  speculation that names no blocker. Unresolved work is a deferral, not a pass (I8).
+- `blocker` and tripwires attach to the individual instance. Decide placement per instance before
+  grouping. Group only when category, severity, verdict, disposition and output lane all match, keep
+  each instance's evidence, blocker and tripwire in the text, and emit separate flags when one
+  confidence score cannot represent them all.
+
+**5. Settling a blocker live: what is allowed.** Before marking anything UNRESOLVED, try to settle it
+with a read-only observation, inside the access the scan already has for that project:
+- Allowed: catalog and configuration reads (`pg_policy` / `pg_policies`, `pg_class.relrowsecurity`,
+  `information_schema` grants, `pg_proc` **metadata**, trigger lists), the edge-function list and its
+  `verify_jwt` flags, the auth settings endpoint, and **bounded aggregates**: `count(*)`, filtered to
+  what the question needs, run in the **same explicit read-only transaction** as
+  `SET LOCAL statement_timeout = '5s'` (`BEGIN READ ONLY; SET LOCAL …; SELECT …; COMMIT;` in one call;
+  separate tool calls do not share the setting). A timeout bounds duration, not side effects. Before
+  aggregating an application table or view, establish from the catalog that the effective role, the
+  RLS predicates, view expansion and every function they reference run no application logic; if you
+  cannot, skip the aggregate.
+- Not allowed: selecting row contents, invoking any application function, RPC or view that runs app
+  logic, sending exploit payloads, or any write — including writes inside a transaction you intend to
+  roll back. A rollback does not undo external effects. **In unattended scans this overrides I18 rule
+  4.** An escalation attempt you did not run is a verification limitation, not automatically a
+  blocker: keep the finding CONFIRMED when source and catalog evidence establish it, and mark it
+  UNRESOLVED only when the missing observation decides existence. Owner attendance alone does not
+  authorize a mutation or remove external effects.
+- Select only the fields you need. A function definition can contain a secret; never paste one whole.
+- If these limits stop you, the item stays UNRESOLVED with its blocker.
+
+**6. Orchestrator: the refutation pass.** After structural validation, each project's P1 and P2 flags,
+with their traces, go to one fresh verifier that did not scan that project. One verifier per project,
+batched — not one per flag. The verifier also receives every I2 disposition source for that project:
+Accepted Risks, Resolved entries, exclusions and the suppression ledger. It does not re-raise an
+unchanged accepted issue within its accepted scope, and it applies I2's exceptions: changed facts,
+regressions and live re-verification. It returns `STANDS`,
+`DOWNGRADE <tier>`, `UNRESOLVED <blocker>` or `REJECT <citation>` per flag. Verdicts are **never
+applied automatically**: the scanner's verdict stands pending owner review, but every dispute is
+annotated visibly in the project report, the dashboard and the debrief, so nobody reads a contested
+flag as uncontested. Until ingestion (`scans/write_scan_jsons.py`, `scans/phase_c_update.py`) carries
+`verdict`, `blocker` and `refutation`, begin a disputed Active Flag's description with
+`DISPUTED: {verifier verdict}; owner review pending`, short enough to survive the extractor's
+150-character cut, and confirm the marker appears in the generated dashboard data before saying the
+dispute was published. The full rationale stays in the project report and the debrief. The owner decides, as with Codex disagreements. Codex remains the cross-vendor check on
+net-new P1s.
+
+### I20. Severity describes the impact the evidence establishes, not the worst case it resembles (v7.9)
+
+This rule sets severity for judgment findings. It does not override the dependency-CVE tier table or
+the fixed tiers of the taxonomy's hygiene keys (`missing-csp`, `missing-hsts`, `missing-x-frame`, and
+so on).
+
+Three inflation moves, each forbidden:
+- **A crash is not an outage.** Name the failure mechanism and the runtime's real concurrency model,
+  then say who else is affected. Do not infer isolation from "serverless": Vercel Fluid Compute runs
+  concurrent invocations in one instance, so a CPU spin or a process-level crash can hit other users'
+  requests. A crash confined to one request is a single-request availability bug. One that pins a
+  shared instance, kills a long-running process, poisons a cache entry or stalls a queue is shared
+  availability loss. Say which, and why.
+- **A same-principal action is not privilege gain.** A user changing, deleting or exporting data they
+  are already entitled to is not an escalation, however alarming the route name.
+- **A crash is not code execution, and a read is not a write.** Name the strongest result the evidence
+  shows and stop there.
+
+**What a judgment-based P1 needs** (at least one): crossing a trust boundary — unauthenticated → data,
+user → another user or tenant, user → admin, or a secret leaving its holder — **or** severe shared
+availability loss, **or** spending the operator's money without a working bound. These are necessary,
+not sufficient. Crossing a boundary does not force P1; apply the category's severity guidance and the
+demonstrated sensitivity, scope and consequence (a stored-URL scheme across users is P2 by its check).
+
+**A missing best practice with no affected principal or resource is not a finding.** If you cannot
+name who is harmed and what they lose, it is a hardening note: P4 at most, never P1–P3.
+
+### I21. Score the weakest path to an operation, and say which entry points you read (v7.9)
+
+A protected operation usually has more than one door: the route the UI calls, a server action added
+later, a Supabase RPC, the table itself through the RLS client, a cron or webhook, an edge function, a
+second HTTP method on the same route file. A scan that reads the front door has scored the strongest
+path, not the system.
+
+1. **Build one operation inventory per project, once, and reuse it across every check.** Count each
+   HTTP method of each route handler separately — a `route.ts` exporting `POST` and `DELETE` is two
+   entry points. Count every externally invocable server action, including inline `'use server'`
+   functions; each exposed callable RPC; each edge function and Cloud Function entry point; and each
+   direct database operation a client can perform on an exposed table, view or Firestore collection,
+   with read, create, update and delete authorization tracked separately. Include event-triggered
+   paths (database triggers, Firestore triggers, webhooks) whose triggering write an attacker can cause.
+   Track storage buckets as *resources* with their operation-specific policies, not as entry points.
+2. **Compare paths that implement the same effect under the same entitlement.** A public catalog read
+   and an admin price update touch the same table and rightly differ; that is not a gap. Two paths
+   that both unlink a receipt and differ in authorization are. Score the weakest, and name the others
+   in the flag text so the fix covers all of them (this extends I10 from "every instance of a pattern"
+   to "every path to an operation").
+3. **A session check authenticates; it does not authorize.** For every privileged effect, find the
+   authorization — ownership, membership, role, or a resource policy — and cite it. Building a
+   service-role client neither proves nor disproves scoping: a later `.eq('owner_id', user.id)` can
+   scope it correctly. But where the only check before a service-role write is "a session exists,"
+   ask who holds a session without the entitlement. Two common answers: anyone, when self-signup is
+   open; and every **removed** member, whose account and session outlive the deleted membership row and
+   who already knows the record ids.
+4. **Coverage line.** In `## Metrics` of `docs/security-scan.md`, record per kind: entry points whose
+   authorization you traced, out of those found — "methods 31/33 · server actions 4/4 · RPCs 3/6 ·
+   edge functions 2/2 · table ops 40/52 · triggers 3/3 · buckets 2/2 (policies read)." List the
+   untraced ones and why, and any kind you could not enumerate. "Read in full"
+   means the handler *and* the middleware, helpers and effective policies it relies on. Untraced is
+   not passed (I8), and a clean result with most entry points untraced must say so in the Strengths
+   line rather than letting "0 P1" stand alone.
+
+Worked example (receiptstack, 2026-11-09 calibration). `src/app/api/match/route.ts` exports `POST`,
+which links a receipt through the user's RLS client and is correctly scoped, and `DELETE` (`:56-97`),
+which checks only for a session, then deletes the link and resets `match_status` through the service
+role. Prior scans read the POST path and passed the operation. Both principals from rule 3 were live:
+signup was open, and a bounded aggregate (`auth.users` with no `organization_users` row, not deleted,
+not banned) returned 1 account.
 
 If flags array is empty, use []
 ```

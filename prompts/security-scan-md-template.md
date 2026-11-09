@@ -14,7 +14,7 @@
 |----------|----------|------------|-------------|
 {rows from scan; if no flags, replace the table body with the literal text "_None_" on its own line.}
 
-### Watch List (confidence < 0.8)
+### Watch List
 {list, or "_None_"}
 
 ### Accepted Risks
@@ -39,5 +39,6 @@
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
 - **Scan prompt version:** {version from the prompt's title line}
+- **Coverage:** {entry points whose authorization you traced / found, by kind; then the untraced ones and why (v7.9 I21)}
 
 <!-- SCAN:AUTO:END -->
