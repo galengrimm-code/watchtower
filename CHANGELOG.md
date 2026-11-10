@@ -7,6 +7,31 @@ prompt bump as a release.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) loosely.
 
+## 2026-11-10 — v7.10 (the refutation pass widens, keeps score, and gets a coverage critic)
+
+v7.9 adopted Cloudflare's refutation pass but the orchestrator ran it on P1s and the commercial
+app's P2s only. Its calibration run rejected 5 of 8 candidates, and the 2026-11-07 cycle left sixty
+P2s unchallenged. With scans now monthly, the wider pass is affordable.
+
+- **Wider refutation (I19 part 6).** Every P1 and P2 Active Flag in every project, plus every Watch
+  List item from a PROVISIONAL check, goes to a fresh verifier. At most 6 items per verifier; a
+  bigger project is split into batches. When usage runs short the orchestrator dispatches the
+  commercial app, then P1s, then P2s, then calibration items, and records what it skipped.
+- **Precision ledger.** New `scans/refutation_ledger.py` records each verdict per check key across
+  cycles (`scans/refutation-ledger.jsonl`, no flag text stored) and reports `PROMOTE candidate`,
+  `NOISY` and `INFLATED` recommendations. It reads the PROVISIONAL set from the prompt's taxonomy
+  table. Nothing is applied automatically: a promotion is a versioned prompt edit the owner approves.
+  Promotion needs decided verdicts on 3+ distinct findings across 2+ cycles; inflation is reported
+  even beside a promotion; conflicting verdicts are refused, not resolved by file order; a check
+  edit adds a calibration reset (`scans/refutation-resets.json`) so old evidence stops counting.
+  Codex adversarial review: 7 P2 + 3 P3, all fixed before release.
+- **Coverage critic (I21 part 5).** The `Coverage:` untraced list must name each entry point. A fresh
+  critic traces up to 25 of them (the commercial app every cycle; other projects under half traced,
+  capped at 3), its candidates are refuted, and survivors go to the Watch List only, marked
+  `Coverage critic (owner review):`.
+- v7.9 release notes moved to `prompts/PROMPT-HISTORY.md`. Template markers read `v7.10`.
+- No new categories. No change to how a scan agent decides a finding.
+
 ## 2026-11-09 — v7.9 (business logic, session boundaries, and a second dashboard lane)
 
 v7.8 covered injection, XSS, SSRF, CORS, OAuth, RLS, webhooks, secrets, supply chain and CI. A

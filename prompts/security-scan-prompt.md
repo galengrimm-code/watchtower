@@ -5,19 +5,18 @@ Paste this into Claude Code inside a project directory (single-project mode) or 
 ---
 
 ```
-# Security Scan Prompt v7.9
+# Security Scan Prompt v7.10
 
 Scan this project and give me a full security audit and code analysis.
 
-**v7.9 (2026-11-09) — business-logic and session-boundary classes, and three validation rules, adapted from Cloudflare's open-source `security-audit` skill (MIT, github.com/cloudflare/security-audit-skill):**
-- **Why.** v7.8 covers injection, XSS, SSRF, CORS, OAuth, RLS/tenant scoping, webhooks, secrets, supply chain and CI well. A class-by-class comparison against Cloudflare's hunting references found it does not look at *business logic* (races, amounts, export scope) or at data leaking *across a session boundary* (service-worker caches, CDN-cached private responses, stale authorization). The v7.8 prompt contains zero occurrences of `Math.random`, `postMessage`, `x-forwarded-host`, `caches.put` or PostgREST `.or(` — each a known way into this stack.
-- **STEP 1: fifteen new checks** in a new "v7.9 additions" block. Four grep-led checks with structural guards emit Active Flags: `weak-token-randomness`, `postmessage-origin-unchecked`, `postgrest-filter-injection`, `unsafe-url-scheme`. Eleven judgment-heavy, version-dependent or platform-dependent checks are **PROVISIONAL (Watch List only)** until a cycle calibrates them, same lane as the v7.1 provisionals: `private-response-cached`, `sw-cache-identity-leak`, `race-check-then-act`, `amount-tampering`, `export-scope-overreach`, `signed-url-overreach`, `stale-authz-after-revocation`, `llm-indirect-injection`, `auth-recovery-flow-gap`, `host-header-link-poisoning`, `user-regex-redos`.
-- **Integrity rules I19–I21.** I19 sets precedence: the v7.1 decision policy makes *candidates*; I19 gives each a status (CONFIRMED / UNRESOLVED / REJECTED). It separates "does it exist" from "how bad is it," leaves the dependency-CVE tier table in charge of CVE flags, defines which live reads may settle a blocker, and adds an orchestrator refutation pass that never auto-applies. I20: impact is what the evidence shows — no crash-to-outage, no same-user-to-escalation, no isolation inferred from "serverless" — and hardening with no affected principal is P4 at most. I21: one operation inventory per project, compare every path to the same effect, and a session check authenticates but does not authorize.
-- **Calibration run (receiptstack, 2026-11-09).** Cloudflare's method was run on receiptstack, read-only: one hunter pass and a critic pass, then three fresh verifiers, with live blockers settled by read-only catalog queries. 8 candidates → **3 confirmed, 5 rejected**. All 3 confirmed were absent from the 2026-11-07 Watchtower scan: a service-role `DELETE /api/match` gated only on a session (medium; I21 worked example), an OCR spend cap counting a client-writable proxy, carried as Resolved since April (low; LLM section), and a caller-keyed rate-limit RPC with no bound on key cardinality or timestamp reach (low; unbounded-growth). Four rejections needed a second org to exist. Migration `20261007130039` and an index definition pointed at the controls; the rejections rest on the live catalog, re-read on 2026-11-09: RLS on for `organizations` and `organization_users`, SELECT-only policies on both, the unique index `organization_users_one_org_per_user` present, no public function that inserts into either table, and `/api/team` as the only membership write path, which refuses a user already on another team. A migration names a control to verify; it does not prove the control is deployed (I1). The fifth rejection rested on the live `users` SELECT policy. Population counts played no part: they describe today, not what can be reached. **Draft review:** a Codex adversarial pass on the first draft found 24 problems — wrong PostgREST and ReDoS guards, a cache check that conflated three cache layers, an unsafe revocation guard, and precedence conflicts with the v7.1 decision policy and the CVE tiers. A second Codex pass found 17 of them only partly fixed and 17 new problems, among them a Find command Bash could not parse and guards that let one control clear an unrelated failure. This text is the third draft.
+**v7.10 (2026-11-10) — the refutation pass widens and starts keeping score; a coverage critic reads the doors the scan skipped:**
+- **Why.** v7.9 adopted Cloudflare's refutation pass, but the orchestrator ran it only on P1s plus the commercial app's P2s, for usage. On the 2026-11-09 calibration run that pass rejected 5 of 8 candidates; the 2026-11-07 cycle left sixty P2s unchallenged. Scans now run monthly, so the wider pass is affordable. Two more gaps: the verdicts were thrown away after each cycle, so the eighteen PROVISIONAL checks (some since v7.1, June) had no way to earn promotion; and the v7.9 `Coverage:` line showed the commercial app at 15 of 87 entry points traced with nobody assigned to trace the rest.
+- **I19 part 6.** Refutation scope is every P1 and P2 Active Flag in every project, plus every Watch List item from a PROVISIONAL check. At most 6 items per verifier. Verdicts are recorded per check key across cycles (`scans/refutation_ledger.py`); the orchestrator reports promote / noisy / inflated recommendations, which the owner applies by a versioned prompt edit, never automatically.
+- **I21 parts 4–5.** The `Coverage:` line's untraced list names each untraced entry point, because a fresh coverage critic now traces them (the commercial app every cycle; other projects under half traced). Its surviving candidates reach the Watch List only, marked for owner review.
+- No new categories. No change to how a scan agent decides a finding.
 - **Upstream pin:** `Upstream pin: cloudflare/security-audit-skill@c1c8a8c1471069fb0e188eeaff69b8e8db6564a8` (2026-09-14, "Clarify guidance and full audit modes"; https://github.com/cloudflare/security-audit-skill). Each scheduled scan compares this pin with the repo's current `main` and reports drift in the debrief. Adopting an upstream change is a new prompt version, reviewed like this one; it never happens automatically.
-- **Not adopted:** Cloudflare's sandboxed execution of target code (Watchtower never runs target code), its multi-wave hunter/critic loop (cost), and the binary, desktop/mobile IPC, RPC/broker, container and release-signing classes (not this stack). Deferred to a later version: decompression bombs, detached upstream work after client cancel, soft-delete bypass, CI `permissions:` scope.
 
-**v6.5–v7.8:** release notes moved to `prompts/PROMPT-HISTORY.md` (2026-11-09) to keep this file smaller for every scan agent. They are a record, not instructions: every rule they introduced is stated in the sections below.
+**v6.5–v7.9:** release notes moved to `prompts/PROMPT-HISTORY.md` (2026-11-09; v7.9 on 2026-11-10) to keep this file smaller for every scan agent. They are a record, not instructions: every rule they introduced is stated in the sections below.
 
 ## MODE DETECTION
 
@@ -1586,7 +1585,7 @@ Create a new CLAUDE.md and supporting doc structure:
 - **Current focus:** {leave blank for user to fill}
 - **Next:** Review scan findings and address any P1/P2 flags.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.9 on {YYYY-MM-DD}. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.10 on {YYYY-MM-DD}. Do not edit this section manually. -->
 
 ## Tech Stack
 
@@ -1690,7 +1689,7 @@ Do not ask permission to run this protocol. Just run it.
 > The block below is rewritten every scan. Record accept/resolve decisions on the Watchtower dashboard,
 > or in a note ABOVE the SCAN:AUTO:START marker (I2 source 3), never inside the block.
 
-<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.9 on {YYYY-MM-DD}. Do not edit this section manually. -->
+<!-- SCAN:AUTO:START — Generated by security-scan-prompt v7.10 on {YYYY-MM-DD}. Do not edit this section manually. -->
 
 ## Security Notes
 
@@ -1726,7 +1725,7 @@ Do not ask permission to run this protocol. Just run it.
 - **Production URL:** {URL, or "_Not deployed_"}
 - **Last commit scanned:** {YYYY-MM-DD} ({short SHA})
 - **Scan prompt version:** {version from this prompt's title line}
-- **Coverage:** {entry points whose authorization you traced / found, by kind — e.g. "methods 31/33 · server actions 4/4 · RPCs 3/6 · edge functions 2/2 · buckets 2/2 (policies read)"; then the untraced ones and why (v7.9 I21)}
+- **Coverage:** {entry points whose authorization you traced / found, by kind — e.g. "methods 31/33 · server actions 4/4 · RPCs 3/6 · edge functions 2/2 · buckets 2/2 (policies read)"; then each untraced entry point by name (`route.ts DELETE`, RPC name, `table:op`) and why (v7.9 I21; the v7.10 coverage critic reads this list)}
 
 <!-- SCAN:AUTO:END -->
 ```
@@ -2391,9 +2390,10 @@ with a read-only observation, inside the access the scan already has for that pr
 - Select only the fields you need. A function definition can contain a secret; never paste one whole.
 - If these limits stop you, the item stays UNRESOLVED with its blocker.
 
-**6. Orchestrator: the refutation pass.** After structural validation, each project's P1 and P2 flags,
-with their traces, go to one fresh verifier that did not scan that project. One verifier per project,
-batched — not one per flag. The verifier also receives every I2 disposition source for that project:
+**6. Orchestrator: the refutation pass.** After structural validation, each project's P1 and P2
+Active Flags, and every Watch List item from a PROVISIONAL check, go with their traces to a fresh
+verifier that did not scan that project. Batched — not one per flag — at most 6 items per verifier
+(v7.10). The verifier also receives every I2 disposition source for that project:
 Accepted Risks, Resolved entries, exclusions and the suppression ledger. It does not re-raise an
 unchanged accepted issue within its accepted scope, and it applies I2's exceptions: changed facts,
 regressions and live re-verification. It returns `STANDS`,
@@ -2406,7 +2406,11 @@ REJECT; tier only for DOWNGRADE). `scans/write_scan_jsons.py` strips that marker
 records it as the flag's structured `refutation` field, which the dashboard shows as a "disputed"
 badge. Confirm `refutation` appears on that flag in the scan JSON and in `data/apps.js` before
 saying the dispute was published. The full rationale stays in the project report and the debrief. The owner decides, as with Codex disagreements. Codex remains the cross-vendor check on
-net-new P1s.
+net-new P1s. **Precision (v7.10):** every verdict is recorded per check key across cycles. A
+PROVISIONAL check whose items keep standing becomes a promotion candidate, and a check whose flags
+keep being rejected or downgraded is reported as noisy or inflated. Promotion, demotion and severity
+changes happen only by an owner-approved, versioned edit to this file. Write each flag so a
+verifier can test it: the trace and the strongest control, as rule 3 asks.
 
 ### I20. Severity describes the impact the evidence establishes, not the worst case it resembles (v7.9)
 
@@ -2464,11 +2468,17 @@ path, not the system.
    who already knows the record ids.
 4. **Coverage line.** In `## Metrics` of `docs/security-scan.md`, record per kind: entry points whose
    authorization you traced, out of those found — "methods 31/33 · server actions 4/4 · RPCs 3/6 ·
-   edge functions 2/2 · table ops 40/52 · triggers 3/3 · buckets 2/2 (policies read)." List the
-   untraced ones and why, and any kind you could not enumerate. "Read in full"
+   edge functions 2/2 · table ops 40/52 · triggers 3/3 · buckets 2/2 (policies read)." List each
+   untraced entry point by name (`api/match/route.ts DELETE`, an RPC name, `receipts:update`) and why,
+   and any kind you could not enumerate. A count without names ("~40 table ops") is not a list. "Read in full"
    means the handler *and* the middleware, helpers and effective policies it relies on. Untraced is
    not passed (I8), and a clean result with most entry points untraced must say so in the Strengths
    line rather than letting "0 P1" stand alone.
+5. **Coverage critic (v7.10, orchestrator).** After the refutation pass, a fresh critic traces the
+   untraced list from part 4: the commercial app every cycle; other projects when under half of at
+   least 10 found entry points are traced, up to 3 a cycle, the most untraced first. Its candidates go through a verifier, and survivors are added to the Watch
+   List only, marked `Coverage critic (owner review):`. You still own the `Coverage:` line; a critic
+   row in the prior report is a lead to trace, not a finding to copy forward.
 
 Worked example (receiptstack, 2026-11-09 calibration). `src/app/api/match/route.ts` exports `POST`,
 which links a receipt through the user's RLS client and is correctly scoped, and `DELETE` (`:56-97`),
